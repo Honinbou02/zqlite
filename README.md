@@ -1,7 +1,7 @@
 # zqlite 
 # zqlite 🟦
 
-![Build](https://img.shields.io/github/actions/workflow/status/ghostkellz/zqlite/build.yml?style=flat-square)
+![Build](https://img.shields.io/github/actions/workflow/status/ghostkellz/zqlite/ci.yml?style=flat-square)
 ![Zig](https://img.shields.io/badge/zig-0.15.0+-f7a41d?style=flat-square)
 ![Status](https://img.shields.io/badge/status-alpha-orange?style=flat-square)
 
