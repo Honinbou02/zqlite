@@ -6,6 +6,7 @@ pub const storage = @import("db/storage.zig");
 pub const btree = @import("db/btree.zig");
 pub const wal = @import("db/wal.zig");
 pub const pager = @import("db/pager.zig");
+pub const encryption = @import("db/encryption.zig");
 
 // SQL parsing modules
 pub const tokenizer = @import("parser/tokenizer.zig");
@@ -15,6 +16,9 @@ pub const parser = @import("parser/parser.zig");
 // Query execution modules
 pub const planner = @import("executor/planner.zig");
 pub const vm = @import("executor/vm.zig");
+
+// CLI shell
+pub const cli = @import("shell/cli.zig");
 
 // Version and metadata
 pub const version = "0.1.0";

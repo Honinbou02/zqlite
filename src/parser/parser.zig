@@ -97,7 +97,11 @@ pub const Parser = struct {
             .Select = ast.SelectStatement{
                 .columns = try columns.toOwnedSlice(),
                 .table = table_name,
+                .joins = &.{}, // Empty joins array for now
                 .where_clause = where_clause,
+                .group_by = null, // Not implemented yet
+                .having = null, // Not implemented yet
+                .order_by = null, // Not implemented yet
                 .limit = limit,
                 .offset = offset,
             },
@@ -361,7 +365,7 @@ pub const Parser = struct {
 
     /// Parse condition in WHERE clause
     fn parseCondition(self: *Self) !ast.Condition {
-        var left = try self.parseComparison();
+        var left = ast.Condition{ .Comparison = try self.parseComparison() };
 
         while (std.meta.activeTag(self.current_token) == .And or std.meta.activeTag(self.current_token) == .Or) {
             const op: ast.LogicalOperator = if (std.meta.activeTag(self.current_token) == .And) .And else .Or;

@@ -23,7 +23,11 @@ pub const Statement = union(enum) {
 pub const SelectStatement = struct {
     columns: []Column,
     table: []const u8,
+    joins: []JoinClause,
     where_clause: ?WhereClause,
+    group_by: ?[][]const u8,
+    having: ?WhereClause,
+    order_by: ?[]OrderByClause,
     limit: ?u32,
     offset: ?u32,
 
@@ -36,8 +40,33 @@ pub const SelectStatement = struct {
         }
         allocator.free(self.columns);
         allocator.free(self.table);
+
+        for (self.joins) |*join| {
+            allocator.free(join.table);
+            join.condition.deinit(allocator);
+        }
+        allocator.free(self.joins);
+
         if (self.where_clause) |*where| {
             where.deinit(allocator);
+        }
+
+        if (self.group_by) |group_by| {
+            for (group_by) |col| {
+                allocator.free(col);
+            }
+            allocator.free(group_by);
+        }
+
+        if (self.having) |*having| {
+            having.deinit(allocator);
+        }
+
+        if (self.order_by) |order_by| {
+            for (order_by) |clause| {
+                allocator.free(clause.column);
+            }
+            allocator.free(order_by);
         }
     }
 };
@@ -242,6 +271,33 @@ pub const Value = union(enum) {
             else => {},
         }
     }
+};
+
+/// JOIN clause
+pub const JoinClause = struct {
+    join_type: JoinType,
+    table: []const u8,
+    condition: Condition,
+};
+
+/// JOIN types
+pub const JoinType = enum {
+    Inner,
+    Left,
+    Right,
+    Full,
+};
+
+/// ORDER BY clause
+pub const OrderByClause = struct {
+    column: []const u8,
+    direction: SortDirection,
+};
+
+/// Sort direction
+pub const SortDirection = enum {
+    Asc,
+    Desc,
 };
 
 test "ast creation" {

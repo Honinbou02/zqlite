@@ -7,6 +7,7 @@ pub const StorageEngine = struct {
     allocator: std.mem.Allocator,
     pager: *pager.Pager,
     tables: std.StringHashMap(*Table),
+    indexes: std.StringHashMap(*Index),
     is_memory: bool,
 
     const Self = @This();
@@ -17,6 +18,7 @@ pub const StorageEngine = struct {
         engine.allocator = allocator;
         engine.pager = try pager.Pager.init(allocator, path);
         engine.tables = std.StringHashMap(*Table).init(allocator);
+        engine.indexes = std.StringHashMap(*Index).init(allocator);
         engine.is_memory = false;
 
         // Load existing tables from file
@@ -31,6 +33,7 @@ pub const StorageEngine = struct {
         engine.allocator = allocator;
         engine.pager = try pager.Pager.initMemory(allocator);
         engine.tables = std.StringHashMap(*Table).init(allocator);
+        engine.indexes = std.StringHashMap(*Index).init(allocator);
         engine.is_memory = true;
 
         return engine;
@@ -60,6 +63,25 @@ pub const StorageEngine = struct {
         }
     }
 
+    /// Create an index
+    pub fn createIndex(self: *Self, name: []const u8, table_name: []const u8, column_names: [][]const u8, is_unique: bool) !void {
+        const index = try Index.create(self.allocator, self.pager, name, table_name, column_names, is_unique);
+        try self.indexes.put(try self.allocator.dupe(u8, name), index);
+    }
+
+    /// Get an index by name
+    pub fn getIndex(self: *Self, name: []const u8) ?*Index {
+        return self.indexes.get(name);
+    }
+
+    /// Drop an index
+    pub fn dropIndex(self: *Self, name: []const u8) !void {
+        if (self.indexes.fetchRemove(name)) |entry| {
+            entry.value.deinit(self.allocator);
+            self.allocator.free(entry.key);
+        }
+    }
+
     /// Load existing tables from storage
     fn loadTables(self: *Self) !void {
         // This would read table metadata from page 0 or a dedicated metadata area
@@ -76,22 +98,34 @@ pub const StorageEngine = struct {
 
     /// Clean up storage engine
     pub fn deinit(self: *Self) void {
-        var iterator = self.tables.iterator();
-        while (iterator.next()) |entry| {
+        var table_iterator = self.tables.iterator();
+        while (table_iterator.next()) |entry| {
             entry.value_ptr.*.deinit();
             self.allocator.free(entry.key_ptr.*);
         }
         self.tables.deinit();
+
+        var index_iterator = self.indexes.iterator();
+        while (index_iterator.next()) |entry| {
+            entry.value_ptr.*.deinit(self.allocator);
+            self.allocator.free(entry.key_ptr.*);
+        }
+        self.indexes.deinit();
+
         self.pager.deinit();
         self.allocator.destroy(self);
     }
 
     /// Get storage statistics
     pub fn getStats(self: *Self) StorageStats {
+        const cache_stats = self.pager.getCacheStats();
         return StorageStats{
-            .table_count = self.tables.count(),
+            .table_count = @intCast(self.tables.count()),
+            .index_count = @intCast(self.indexes.count()),
             .is_memory = self.is_memory,
             .page_count = self.pager.getPageCount(),
+            .cache_hit_ratio = cache_stats.hit_ratio,
+            .cached_pages = cache_stats.cached_pages,
         };
     }
 };
@@ -198,8 +232,83 @@ pub const Value = union(enum) {
 /// Storage statistics
 pub const StorageStats = struct {
     table_count: u32,
+    index_count: u32,
     is_memory: bool,
     page_count: u32,
+    cache_hit_ratio: f64,
+    cached_pages: u32,
+};
+
+/// Index definition
+pub const Index = struct {
+    name: []const u8,
+    table_name: []const u8,
+    column_names: [][]const u8,
+    btree: *btree.BTree,
+    is_unique: bool,
+
+    const Self = @This();
+
+    /// Create a new index
+    pub fn create(allocator: std.mem.Allocator, page_manager: *pager.Pager, name: []const u8, table_name: []const u8, column_names: [][]const u8, is_unique: bool) !*Self {
+        var index = try allocator.create(Self);
+        index.name = try allocator.dupe(u8, name);
+        index.table_name = try allocator.dupe(u8, table_name);
+
+        // Clone column names
+        index.column_names = try allocator.alloc([]const u8, column_names.len);
+        for (column_names, 0..) |col_name, i| {
+            index.column_names[i] = try allocator.dupe(u8, col_name);
+        }
+
+        index.btree = try btree.BTree.init(allocator, page_manager);
+        index.is_unique = is_unique;
+
+        return index;
+    }
+
+    /// Insert a key into the index
+    pub fn insert(self: *Self, key: u64, row_id: u64) !void {
+        if (self.is_unique) {
+            // Check if key already exists
+            if (try self.btree.search(key)) |_| {
+                return error.UniqueConstraintViolation;
+            }
+        }
+
+        // Create a row with just the row ID
+        const index_row = Row{
+            .values = try self.btree.allocator.alloc(Value, 1),
+        };
+        index_row.values[0] = Value{ .Integer = @intCast(row_id) };
+
+        try self.btree.insert(key, index_row);
+    }
+
+    /// Search for a key in the index
+    pub fn search(self: *Self, key: u64) !?u64 {
+        if (try self.btree.search(key)) |row| {
+            if (row.values.len > 0) {
+                switch (row.values[0]) {
+                    .Integer => |row_id| return @intCast(row_id),
+                    else => return null,
+                }
+            }
+        }
+        return null;
+    }
+
+    /// Clean up index
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        allocator.free(self.table_name);
+        for (self.column_names) |col_name| {
+            allocator.free(col_name);
+        }
+        allocator.free(self.column_names);
+        self.btree.deinit();
+        allocator.destroy(self);
+    }
 };
 
 test "storage engine creation" {

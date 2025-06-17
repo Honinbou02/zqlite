@@ -1,27 +1,45 @@
 const std = @import("std");
 const zqlite = @import("zqlite");
+const cli = @import("zqlite").cli;
 
 pub fn main() !void {
-    std.debug.print("🚀 Starting zqlite...\n", .{});
-    try zqlite.advancedPrint();
-    
-    // Demo basic functionality
-    std.debug.print("\n📋 Testing core modules:\n", .{});
-    std.debug.print("   ✅ Library loaded successfully\n", .{});
-    std.debug.print("   ✅ Version: {s}\n", .{zqlite.version});
-    
-    std.debug.print("\n🔧 Next steps:\n", .{});
-    std.debug.print("   - Implement B-tree storage engine\n", .{});
-    std.debug.print("   - Add SQL parser\n", .{});
-    std.debug.print("   - Create WAL system\n", .{});
-    std.debug.print("   - Build query executor\n", .{});
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+
+    // Convert [:0]u8 to []const u8
+    var const_args = try allocator.alloc([]const u8, args.len);
+    defer allocator.free(const_args);
+    for (args, 0..) |arg, i| {
+        const_args[i] = arg;
+    }
+
+    if (args.len <= 1) {
+        // No arguments, start interactive shell
+        try cli.runShell(allocator);
+    } else {
+        // Process command line arguments
+        try cli.executeCommand(allocator, const_args);
+    }
 }
 
 test "simple test" {
     var list = std.ArrayList(i32).init(std.testing.allocator);
-    defer list.deinit(); // Try commenting this out and see if zig detects the memory leak!
+    defer list.deinit();
     try list.append(42);
     try std.testing.expectEqual(@as(i32, 42), list.pop());
+}
+
+test "database integration" {
+    // Test in-memory database
+    const conn = try zqlite.openMemory();
+    defer conn.close();
+
+    // Test basic functionality
+    try std.testing.expect(conn.info().is_memory);
 }
 
 test "fuzz example" {

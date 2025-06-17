@@ -253,7 +253,7 @@ pub const Token = union(enum) {
 
 /// Check if identifier is a keyword
 fn getKeyword(identifier: []const u8) ?Token {
-    const keyword_map = std.ComptimeStringMap(Token, .{
+    const keyword_map = std.StaticStringMap(Token).initComptime(.{
         .{ "SELECT", .Select },
         .{ "select", .Select },
         .{ "FROM", .From },

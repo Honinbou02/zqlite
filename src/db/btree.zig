@@ -23,7 +23,7 @@ pub const BTree = struct {
         tree.root_page = try page_manager.allocatePage();
 
         // Initialize root as leaf node
-        var root_node = Node.initLeaf(tree.order);
+        var root_node = try Node.initLeaf(allocator, tree.order);
         try tree.writeNode(tree.root_page, &root_node);
 
         return tree;
@@ -37,7 +37,7 @@ pub const BTree = struct {
         if (root.isFull()) {
             // Split root
             const new_root_page = try self.pager.allocatePage();
-            var new_root = Node.initInternal(self.order);
+            var new_root = try Node.initInternal(self.allocator, self.order);
             new_root.children[0] = self.root_page;
 
             try self.splitChild(&new_root, 0);
@@ -92,11 +92,54 @@ pub const BTree = struct {
 
     /// Split a full child node
     fn splitChild(self: *Self, parent: *Node, child_index: u32) !void {
-        _ = self;
-        _ = parent;
-        _ = child_index;
-        // Implementation would split the child node
-        // This is a complex operation involving key redistribution
+        const full_child_page = parent.children[child_index];
+        var full_child = try self.readNode(full_child_page);
+        defer full_child.deinit(self.allocator);
+
+        // Create new node for right half
+        const new_child_page = try self.pager.allocatePage();
+        var new_child = if (full_child.is_leaf)
+            try Node.initLeaf(self.allocator, self.order)
+        else
+            try Node.initInternal(self.allocator, self.order);
+
+        const mid_index = self.order / 2;
+
+        // Move upper half of keys to new node
+        const keys_to_move = full_child.key_count - mid_index - 1;
+        if (keys_to_move > 0) {
+            @memcpy(new_child.keys[0..keys_to_move], full_child.keys[mid_index + 1 .. full_child.key_count]);
+            new_child.key_count = @intCast(keys_to_move);
+
+            if (full_child.is_leaf) {
+                @memcpy(new_child.values[0..keys_to_move], full_child.values[mid_index + 1 .. full_child.key_count]);
+            } else {
+                @memcpy(new_child.children[0 .. keys_to_move + 1], full_child.children[mid_index + 1 .. full_child.key_count + 1]);
+            }
+        }
+
+        // Update counts
+        full_child.key_count = @intCast(mid_index);
+
+        // Move the middle key up to parent
+        const middle_key = full_child.keys[mid_index];
+
+        // Shift parent's keys and children to make room
+        var i = parent.key_count;
+        while (i > child_index) {
+            parent.keys[i] = parent.keys[i - 1];
+            parent.children[i + 1] = parent.children[i];
+            i -= 1;
+        }
+
+        // Insert middle key and new child pointer
+        parent.keys[child_index] = middle_key;
+        parent.children[child_index + 1] = new_child_page;
+        parent.key_count += 1;
+
+        // Write updated nodes
+        try self.writeNode(full_child_page, &full_child);
+        try self.writeNode(new_child_page, &new_child);
     }
 
     /// Search within a specific node
@@ -170,30 +213,35 @@ const Node = struct {
     values: []storage.Row, // Only used in leaf nodes
     children: []u32, // Only used in internal nodes
     order: u32,
+    max_keys: u32,
 
     const Self = @This();
 
     /// Initialize a leaf node
-    pub fn initLeaf(order: u32) Self {
+    pub fn initLeaf(allocator: std.mem.Allocator, order: u32) !Self {
+        const max_keys = order - 1;
         return Self{
             .is_leaf = true,
             .key_count = 0,
-            .keys = undefined, // Will be allocated when needed
-            .values = undefined,
-            .children = undefined,
+            .keys = try allocator.alloc(u64, max_keys),
+            .values = try allocator.alloc(storage.Row, max_keys),
+            .children = &.{}, // Empty for leaf nodes
             .order = order,
+            .max_keys = max_keys,
         };
     }
 
     /// Initialize an internal node
-    pub fn initInternal(order: u32) Self {
+    pub fn initInternal(allocator: std.mem.Allocator, order: u32) !Self {
+        const max_keys = order - 1;
         return Self{
             .is_leaf = false,
             .key_count = 0,
-            .keys = undefined, // Will be allocated when needed
-            .values = undefined,
-            .children = undefined,
+            .keys = try allocator.alloc(u64, max_keys),
+            .values = &.{}, // Empty for internal nodes
+            .children = try allocator.alloc(u32, order), // One more child than keys
             .order = order,
+            .max_keys = max_keys,
         };
     }
 
@@ -220,23 +268,153 @@ const Node = struct {
 
     /// Serialize node to bytes
     pub fn serialize(self: *const Self, buffer: []u8) !void {
+        var stream = std.io.fixedBufferStream(buffer);
+        const writer = stream.writer();
+
+        // Write header
+        try writer.writeInt(u8, if (self.is_leaf) 1 else 0, .little);
+        try writer.writeInt(u32, self.key_count, .little);
+        try writer.writeInt(u32, self.order, .little);
+
+        // Write keys
+        for (self.keys[0..self.key_count]) |key| {
+            try writer.writeInt(u64, key, .little);
+        }
+
+        if (self.is_leaf) {
+            // Write values for leaf nodes
+            for (self.values[0..self.key_count]) |value| {
+                try self.serializeValue(writer, &value);
+            }
+        } else {
+            // Write child pointers for internal nodes
+            for (self.children[0 .. self.key_count + 1]) |child| {
+                try writer.writeInt(u32, child, .little);
+            }
+        }
+    }
+
+    /// Serialize a single value
+    fn serializeValue(self: *const Self, writer: anytype, value: *const storage.Row) !void {
         _ = self;
-        _ = buffer;
-        // Implementation would serialize node data to the buffer
+        // Write number of values in row
+        try writer.writeInt(u32, @intCast(value.values.len), .little);
+
+        // Write each value
+        for (value.values) |val| {
+            switch (val) {
+                .Integer => |i| {
+                    try writer.writeInt(u8, 1, .little); // Type tag
+                    try writer.writeInt(i64, i, .little);
+                },
+                .Real => |r| {
+                    try writer.writeInt(u8, 2, .little); // Type tag
+                    try writer.writeInt(u64, @bitCast(r), .little);
+                },
+                .Text => |t| {
+                    try writer.writeInt(u8, 3, .little); // Type tag
+                    try writer.writeInt(u32, @intCast(t.len), .little);
+                    try writer.writeAll(t);
+                },
+                .Blob => |b| {
+                    try writer.writeInt(u8, 4, .little); // Type tag
+                    try writer.writeInt(u32, @intCast(b.len), .little);
+                    try writer.writeAll(b);
+                },
+                .Null => {
+                    try writer.writeInt(u8, 0, .little); // Type tag
+                },
+            }
+        }
     }
 
     /// Deserialize node from bytes
     pub fn deserialize(allocator: std.mem.Allocator, buffer: []const u8, order: u32) !Self {
-        _ = allocator;
-        _ = buffer;
-        return Self.initLeaf(order); // Placeholder
+        var stream = std.io.fixedBufferStream(buffer);
+        const reader = stream.reader();
+
+        // Read header
+        const is_leaf = (try reader.readInt(u8, .little)) == 1;
+        const key_count = try reader.readInt(u32, .little);
+        const stored_order = try reader.readInt(u32, .little);
+
+        if (stored_order != order) {
+            return error.OrderMismatch;
+        }
+
+        // Create node
+        var node = if (is_leaf)
+            try Node.initLeaf(allocator, order)
+        else
+            try Node.initInternal(allocator, order);
+
+        node.key_count = key_count;
+
+        // Read keys
+        for (0..key_count) |i| {
+            node.keys[i] = try reader.readInt(u64, .little);
+        }
+
+        if (is_leaf) {
+            // Read values for leaf nodes
+            for (0..key_count) |i| {
+                node.values[i] = try deserializeValue(allocator, reader);
+            }
+        } else {
+            // Read child pointers for internal nodes
+            for (0..key_count + 1) |i| {
+                node.children[i] = try reader.readInt(u32, .little);
+            }
+        }
+
+        return node;
+    }
+
+    /// Deserialize a single value
+    fn deserializeValue(allocator: std.mem.Allocator, reader: anytype) !storage.Row {
+        const value_count = try reader.readInt(u32, .little);
+        var values = try allocator.alloc(storage.Value, value_count);
+
+        for (0..value_count) |i| {
+            const type_tag = try reader.readInt(u8, .little);
+            values[i] = switch (type_tag) {
+                0 => storage.Value.Null,
+                1 => storage.Value{ .Integer = try reader.readInt(i64, .little) },
+                2 => storage.Value{ .Real = @bitCast(try reader.readInt(u64, .little)) },
+                3 => blk: {
+                    const len = try reader.readInt(u32, .little);
+                    const text = try allocator.alloc(u8, len);
+                    _ = try reader.readAll(text);
+                    break :blk storage.Value{ .Text = text };
+                },
+                4 => blk: {
+                    const len = try reader.readInt(u32, .little);
+                    const blob = try allocator.alloc(u8, len);
+                    _ = try reader.readAll(blob);
+                    break :blk storage.Value{ .Blob = blob };
+                },
+                else => return error.InvalidValueType,
+            };
+        }
+
+        return storage.Row{ .values = values };
     }
 
     /// Clean up node
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
-        _ = self;
-        _ = allocator;
-        // Clean up allocated arrays
+        allocator.free(self.keys);
+        if (self.is_leaf) {
+            // Clean up values in leaf nodes
+            for (self.values[0..self.key_count]) |value| {
+                for (value.values) |val| {
+                    val.deinit(allocator);
+                }
+                allocator.free(value.values);
+            }
+            allocator.free(self.values);
+        } else {
+            allocator.free(self.children);
+        }
     }
 };
 

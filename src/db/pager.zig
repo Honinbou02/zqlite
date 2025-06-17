@@ -1,13 +1,18 @@
 const std = @import("std");
+const encryption = @import("encryption.zig");
 
 /// Page-based storage manager
 pub const Pager = struct {
     allocator: std.mem.Allocator,
     file: ?std.fs.File,
-    page_cache: std.HashMap(u32, *Page, std.hash_map.DefaultContext(u32), std.hash_map.default_max_load_percentage),
+    page_cache: std.AutoHashMap(u32, *Page),
+    lru_list: std.ArrayList(u32), // LRU tracking
     next_page_id: u32,
     page_size: u32,
     is_memory: bool,
+    cache_hits: u64,
+    cache_misses: u64,
+    encryption: encryption.Encryption,
 
     const Self = @This();
     const DEFAULT_PAGE_SIZE = 4096;
@@ -17,10 +22,14 @@ pub const Pager = struct {
     pub fn init(allocator: std.mem.Allocator, path: []const u8) !*Self {
         var pager = try allocator.create(Self);
         pager.allocator = allocator;
-        pager.page_cache = std.HashMap(u32, *Page, std.hash_map.DefaultContext(u32), std.hash_map.default_max_load_percentage).init(allocator);
+        pager.page_cache = std.AutoHashMap(u32, *Page).init(allocator);
+        pager.lru_list = std.ArrayList(u32).init(allocator);
         pager.page_size = DEFAULT_PAGE_SIZE;
         pager.is_memory = false;
         pager.next_page_id = 1;
+        pager.cache_hits = 0;
+        pager.cache_misses = 0;
+        pager.encryption = encryption.Encryption.initPlain();
 
         // Open or create the database file
         pager.file = std.fs.cwd().createFile(path, .{ .read = true, .truncate = false }) catch |err| switch (err) {
@@ -44,10 +53,14 @@ pub const Pager = struct {
         var pager = try allocator.create(Self);
         pager.allocator = allocator;
         pager.file = null;
-        pager.page_cache = std.HashMap(u32, *Page, std.hash_map.DefaultContext(u32), std.hash_map.default_max_load_percentage).init(allocator);
+        pager.page_cache = std.AutoHashMap(u32, *Page).init(allocator);
+        pager.lru_list = std.ArrayList(u32).init(allocator);
         pager.page_size = DEFAULT_PAGE_SIZE;
         pager.is_memory = true;
         pager.next_page_id = 1;
+        pager.cache_hits = 0;
+        pager.cache_misses = 0;
+        pager.encryption = encryption.Encryption.initPlain();
 
         return pager;
     }
@@ -78,8 +91,12 @@ pub const Pager = struct {
     pub fn getPage(self: *Self, page_id: u32) !*Page {
         // Check cache first
         if (self.page_cache.get(page_id)) |page| {
+            self.cache_hits += 1;
+            try self.updateLRU(page_id);
             return page;
         }
+
+        self.cache_misses += 1;
 
         // Load from storage
         const page = try self.allocator.create(Page);
@@ -95,8 +112,7 @@ pub const Pager = struct {
                 _ = try file.seekTo(offset);
 
                 const bytes_read = try file.read(page.data);
-                if (bytes_read < self.page_size) {
-                    // Zero out remaining bytes if file is smaller
+                if (bytes_read < self.page_size) { // Zero out remaining bytes if file is smaller
                     @memset(page.data[bytes_read..], 0);
                 }
             }
@@ -107,6 +123,7 @@ pub const Pager = struct {
 
         // Add to cache
         try self.page_cache.put(page_id, page);
+        try self.updateLRU(page_id);
 
         // Evict pages if cache is too large
         if (self.page_cache.count() > MAX_CACHED_PAGES) {
@@ -114,6 +131,20 @@ pub const Pager = struct {
         }
 
         return page;
+    }
+
+    /// Update LRU list
+    fn updateLRU(self: *Self, page_id: u32) !void {
+        // Remove page_id if it exists in LRU list
+        for (self.lru_list.items, 0..) |id, i| {
+            if (id == page_id) {
+                _ = self.lru_list.swapRemove(i);
+                break;
+            }
+        }
+
+        // Add to end (most recently used)
+        try self.lru_list.append(page_id);
     }
 
     /// Mark a page as dirty (needs to be written to storage)
@@ -153,35 +184,40 @@ pub const Pager = struct {
         }
     }
 
-    /// Evict some pages from cache
+    /// Evict some pages from cache using LRU strategy
     fn evictPages(self: *Self) !void {
-        // Simple eviction: remove first 10% of pages
-        const to_evict = self.page_cache.count() / 10;
-        var evicted: u32 = 0;
+        // Evict least recently used pages until we're under the limit
+        const target_size = (MAX_CACHED_PAGES * 3) / 4; // Evict down to 75% capacity
 
-        var iterator = self.page_cache.iterator();
-        var pages_to_remove = std.ArrayList(u32).init(self.allocator);
-        defer pages_to_remove.deinit();
+        while (self.page_cache.count() > target_size and self.lru_list.items.len > 0) {
+            const lru_page_id = self.lru_list.orderedRemove(0); // Remove least recently used
 
-        while (iterator.next()) |entry| {
-            if (evicted >= to_evict) break;
+            if (self.page_cache.fetchRemove(lru_page_id)) |entry| {
+                const page = entry.value;
 
-            const page = entry.value_ptr.*;
-            if (page.is_dirty) {
-                try self.writePage(page);
-            }
+                // Write dirty page before evicting
+                if (page.is_dirty) {
+                    try self.writePage(page);
+                }
 
-            try pages_to_remove.append(entry.key_ptr.*);
-            evicted += 1;
-        }
-
-        // Remove from cache
-        for (pages_to_remove.items) |page_id| {
-            if (self.page_cache.fetchRemove(page_id)) |entry| {
-                self.allocator.free(entry.value.data);
-                self.allocator.destroy(entry.value);
+                // Clean up page
+                self.allocator.free(page.data);
+                self.allocator.destroy(page);
             }
         }
+    }
+
+    /// Get cache statistics
+    pub fn getCacheStats(self: *Self) CacheStats {
+        return CacheStats{
+            .hits = self.cache_hits,
+            .misses = self.cache_misses,
+            .hit_ratio = if (self.cache_hits + self.cache_misses > 0)
+                @as(f64, @floatFromInt(self.cache_hits)) / @as(f64, @floatFromInt(self.cache_hits + self.cache_misses))
+            else
+                0.0,
+            .cached_pages = @intCast(self.page_cache.count()),
+        };
     }
 
     /// Get total number of pages
@@ -202,6 +238,7 @@ pub const Pager = struct {
             self.allocator.destroy(page);
         }
         self.page_cache.deinit();
+        self.lru_list.deinit();
 
         // Close file
         if (self.file) |file| {
@@ -210,6 +247,14 @@ pub const Pager = struct {
 
         self.allocator.destroy(self);
     }
+};
+
+/// Cache statistics
+pub const CacheStats = struct {
+    hits: u64,
+    misses: u64,
+    hit_ratio: f64,
+    cached_pages: u32,
 };
 
 /// Database page

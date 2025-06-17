@@ -242,7 +242,7 @@ pub const Planner = struct {
     fn cloneExpression(self: *Self, expression: *const ast.Expression) !ast.Expression {
         return switch (expression.*) {
             .Column => |col| ast.Expression{ .Column = try self.allocator.dupe(u8, col) },
-            .Literal => |value| ast.Expression{ .Literal = try self.cloneValue(value) },
+            .Literal => |value| ast.Expression{ .Literal = try self.cloneAstValue(value) },
         };
     }
 
@@ -254,6 +254,17 @@ pub const Planner = struct {
             .Real => |r| storage.Value{ .Real = r },
             .Blob => |b| storage.Value{ .Blob = try self.allocator.dupe(u8, b) },
             .Null => storage.Value.Null,
+        };
+    }
+
+    /// Clone an AST value (different from storage value)
+    fn cloneAstValue(self: *Self, value: ast.Value) !ast.Value {
+        return switch (value) {
+            .Integer => |i| ast.Value{ .Integer = i },
+            .Text => |t| ast.Value{ .Text = try self.allocator.dupe(u8, t) },
+            .Real => |r| ast.Value{ .Real = r },
+            .Blob => |b| ast.Value{ .Blob = try self.allocator.dupe(u8, b) },
+            .Null => ast.Value.Null,
         };
     }
 };

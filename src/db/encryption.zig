@@ -1,0 +1,132 @@
+const std = @import("std");
+const crypto = std.crypto;
+
+/// Simple encryption module for database files
+pub const Encryption = struct {
+    key: [32]u8, // 256-bit key
+    enabled: bool,
+
+    const Self = @This();
+
+    /// Initialize with a password
+    pub fn init(password: []const u8) !Self {
+        var encryption = Self{
+            .key = undefined,
+            .enabled = true,
+        };
+
+        // Derive key from password using PBKDF2
+        try crypto.pwhash.pbkdf2(
+            &encryption.key,
+            password,
+            "zqlite_salt", // Simple salt - in production, use random salt
+            4096, // iterations
+            crypto.auth.hmac.sha2.HmacSha256,
+        );
+
+        return encryption;
+    }
+
+    /// Initialize without encryption
+    pub fn initPlain() Self {
+        return Self{
+            .key = undefined,
+            .enabled = false,
+        };
+    }
+
+    /// Encrypt data
+    pub fn encrypt(self: *const Self, data: []const u8, output: []u8) !void {
+        if (!self.enabled) {
+            // No encryption, just copy
+            @memcpy(output[0..data.len], data);
+            return;
+        }
+
+        if (output.len < data.len + 16) { // 16 bytes for nonce
+            return error.OutputBufferTooSmall;
+        }
+
+        // Generate random nonce
+        var nonce: [12]u8 = undefined;
+        crypto.random.bytes(&nonce);
+
+        // Copy nonce to output
+        @memcpy(output[0..12], &nonce);
+
+        // Encrypt data
+        const cipher = crypto.aead.chacha_poly.ChaCha20Poly1305;
+        var tag: [16]u8 = undefined;
+
+        cipher.encrypt(
+            output[16 .. data.len + 16], // encrypted data
+            &tag,
+            data, // plaintext
+            &[_]u8{}, // additional data
+            nonce,
+            self.key,
+        );
+
+        // Append tag
+        @memcpy(output[data.len + 16 .. data.len + 32], &tag);
+    }
+
+    /// Decrypt data
+    pub fn decrypt(self: *const Self, encrypted_data: []const u8, output: []u8) !void {
+        if (!self.enabled) {
+            // No encryption, just copy
+            @memcpy(output[0..encrypted_data.len], encrypted_data);
+            return;
+        }
+
+        if (encrypted_data.len < 32) { // 12 + 16 minimum
+            return error.InvalidEncryptedData;
+        }
+
+        const data_len = encrypted_data.len - 32; // subtract nonce + tag
+        if (output.len < data_len) {
+            return error.OutputBufferTooSmall;
+        }
+
+        // Extract nonce
+        const nonce = encrypted_data[0..12];
+
+        // Extract tag
+        const tag = encrypted_data[encrypted_data.len - 16 ..];
+
+        // Extract encrypted data
+        const ciphertext = encrypted_data[16 .. encrypted_data.len - 16];
+
+        // Decrypt
+        const cipher = crypto.aead.chacha_poly.ChaCha20Poly1305;
+        try cipher.decrypt(
+            output[0..data_len],
+            ciphertext,
+            tag[0..16].*,
+            &[_]u8{}, // additional data
+            nonce[0..12].*,
+            self.key,
+        );
+    }
+
+    /// Get encrypted size for a given plaintext size
+    pub fn getEncryptedSize(self: *const Self, plaintext_size: usize) usize {
+        if (!self.enabled) {
+            return plaintext_size;
+        }
+        return plaintext_size + 32; // 12 bytes nonce + 16 bytes tag + 4 bytes padding
+    }
+
+    /// Get decrypted size for a given encrypted size
+    pub fn getDecryptedSize(self: *const Self, encrypted_size: usize) usize {
+        if (!self.enabled) {
+            return encrypted_size;
+        }
+        if (encrypted_size < 32) return 0;
+        return encrypted_size - 32;
+    }
+};
+
+test "encryption basic" {
+    try std.testing.expect(true); // Placeholder
+}
