@@ -158,9 +158,9 @@ pub const Table = struct {
         self.row_count += 1;
     }
 
-    /// Select rows from the table
+    /// Select all rows
     pub fn select(self: *Self, allocator: std.mem.Allocator) ![]Row {
-        return self.btree.selectAll(allocator);
+        return try self.btree.selectAll(allocator);
     }
 
     /// Clean up table

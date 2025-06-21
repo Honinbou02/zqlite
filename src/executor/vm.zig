@@ -54,8 +54,24 @@ pub const VirtualMachine = struct {
         };
 
         const rows = try table.select(self.allocator);
+        defer {
+            // Clean up the rows returned by select (they're already cloned by the B-tree)
+            for (rows) |row| {
+                for (row.values) |value| {
+                    value.deinit(self.allocator);
+                }
+                self.allocator.free(row.values);
+            }
+            self.allocator.free(rows);
+        }
+
         for (rows) |row| {
-            try result.rows.append(row);
+            // Clone the row again for the result (since we're freeing the original)
+            var cloned_values = try self.allocator.alloc(storage.Value, row.values.len);
+            for (row.values, 0..) |value, i| {
+                cloned_values[i] = try self.cloneValue(value);
+            }
+            try result.rows.append(storage.Row{ .values = cloned_values });
         }
     }
 
@@ -144,7 +160,13 @@ pub const VirtualMachine = struct {
         };
 
         for (insert.values) |row_values| {
-            const row = storage.Row{ .values = row_values };
+            // Clone the values to ensure they're owned by the storage engine
+            var cloned_values = try self.allocator.alloc(storage.Value, row_values.len);
+            for (row_values, 0..) |value, i| {
+                cloned_values[i] = try self.cloneValue(value);
+            }
+            
+            const row = storage.Row{ .values = cloned_values };
             try table.insert(row);
             result.affected_rows += 1;
         }
@@ -157,8 +179,19 @@ pub const VirtualMachine = struct {
             return; // Table already exists, skip creation
         }
 
+        // Clone columns for the storage engine (they're owned by the planner otherwise)
+        var cloned_columns = try self.allocator.alloc(storage.Column, create.columns.len);
+        for (create.columns, 0..) |column, i| {
+            cloned_columns[i] = storage.Column{
+                .name = try self.allocator.dupe(u8, column.name),
+                .data_type = column.data_type,
+                .is_primary_key = column.is_primary_key,
+                .is_nullable = column.is_nullable,
+            };
+        }
+
         const schema = storage.TableSchema{
-            .columns = create.columns,
+            .columns = cloned_columns,
         };
 
         try self.connection.storage_engine.createTable(create.table_name, schema);
@@ -171,11 +204,29 @@ pub const VirtualMachine = struct {
             return error.TableNotFound;
         };
 
-        // For now, do a simple table scan and update matching rows
+        // Get all current rows
         const all_rows = try table.select(self.allocator);
-        defer self.allocator.free(all_rows);
+        defer {
+            for (all_rows) |row| {
+                for (row.values) |value| {
+                    value.deinit(self.allocator);
+                }
+                self.allocator.free(row.values);
+            }
+            self.allocator.free(all_rows);
+        }
 
         var updated_count: u32 = 0;
+        var updated_rows = std.ArrayList(storage.Row).init(self.allocator);
+        defer {
+            for (updated_rows.items) |row| {
+                for (row.values) |value| {
+                    value.deinit(self.allocator);
+                }
+                self.allocator.free(row.values);
+            }
+            updated_rows.deinit();
+        }
 
         for (all_rows) |row| {
             // Check if row matches condition
@@ -185,32 +236,56 @@ pub const VirtualMachine = struct {
             }
 
             if (matches) {
-                // Create updated row
-                var updated_row = storage.Row{
-                    .values = try self.allocator.dupe(storage.Value, row.values),
-                };
+                // Create updated row by cloning the original and applying changes
+                var updated_values = try self.allocator.alloc(storage.Value, row.values.len);
+                for (row.values, 0..) |value, i| {
+                    updated_values[i] = try self.cloneValue(value);
+                }
 
                 // Apply assignments
                 for (update.assignments) |assignment| {
-                    // For simplicity, update first column that matches
-                    // In real implementation, would need proper column mapping
-                    if (updated_row.values.len > 0) {
-                        updated_row.values[0].deinit(self.allocator);
-                        updated_row.values[0] = try self.cloneValue(assignment.value);
+                    // For simplicity, update the first column (in a real implementation,
+                    // we'd need proper column name to index mapping from the table schema)
+                    if (updated_values.len > 0) {
+                        updated_values[0].deinit(self.allocator);
+                        updated_values[0] = try self.cloneValue(assignment.value);
                     }
-                    _ = assignment.column; // Suppress unused warning
+                    _ = assignment.column; // Suppress unused warning for now
                 }
 
-                // In a real implementation, would update the B-tree entry
-                // For now, just count the update
+                try updated_rows.append(storage.Row{ .values = updated_values });
                 updated_count += 1;
-
-                // Clean up
-                for (updated_row.values) |value| {
-                    value.deinit(self.allocator);
+            } else {
+                // Keep the original row unchanged
+                var cloned_values = try self.allocator.alloc(storage.Value, row.values.len);
+                for (row.values, 0..) |value, i| {
+                    cloned_values[i] = try self.cloneValue(value);
                 }
-                self.allocator.free(updated_row.values);
+                try updated_rows.append(storage.Row{ .values = cloned_values });
             }
+        }
+
+        // Replace the table data with updated rows
+        // For now, we'll recreate the table (in a real implementation, we'd have proper update methods)
+        const table_name = try self.allocator.dupe(u8, update.table_name);
+        defer self.allocator.free(table_name);
+        
+        // Get table schema
+        const schema = table.schema;
+        
+        // Drop and recreate table with updated data
+        try self.connection.storage_engine.dropTable(update.table_name);
+        try self.connection.storage_engine.createTable(table_name, schema);
+        
+        // Reinsert all rows
+        const new_table = self.connection.storage_engine.getTable(update.table_name).?;
+        for (updated_rows.items) |row| {
+            // Clone the row for insertion
+            var insert_values = try self.allocator.alloc(storage.Value, row.values.len);
+            for (row.values, 0..) |value, i| {
+                insert_values[i] = try self.cloneValue(value);
+            }
+            try new_table.insert(storage.Row{ .values = insert_values });
         }
 
         result.affected_rows = updated_count;
@@ -222,23 +297,70 @@ pub const VirtualMachine = struct {
             return error.TableNotFound;
         };
 
-        // For now, do a simple table scan and mark matching rows for deletion
+        // Get all current rows
         const all_rows = try table.select(self.allocator);
-        defer self.allocator.free(all_rows);
+        defer {
+            for (all_rows) |row| {
+                for (row.values) |value| {
+                    value.deinit(self.allocator);
+                }
+                self.allocator.free(row.values);
+            }
+            self.allocator.free(all_rows);
+        }
 
         var deleted_count: u32 = 0;
+        var surviving_rows = std.ArrayList(storage.Row).init(self.allocator);
+        defer {
+            for (surviving_rows.items) |row| {
+                for (row.values) |value| {
+                    value.deinit(self.allocator);
+                }
+                self.allocator.free(row.values);
+            }
+            surviving_rows.deinit();
+        }
 
         for (all_rows) |row| {
-            // Check if row matches condition
-            var matches = true;
+            // Check if row matches delete condition
+            var should_delete = true;
             if (delete.condition) |condition| {
-                matches = try self.evaluateCondition(&condition, &row);
+                should_delete = try self.evaluateCondition(&condition, &row);
             }
 
-            if (matches) {
-                // In a real implementation, would remove from B-tree
-                // For now, just count the deletion
+            if (should_delete) {
                 deleted_count += 1;
+            } else {
+                // Keep this row - clone it for the surviving rows
+                var cloned_values = try self.allocator.alloc(storage.Value, row.values.len);
+                for (row.values, 0..) |value, i| {
+                    cloned_values[i] = try self.cloneValue(value);
+                }
+                try surviving_rows.append(storage.Row{ .values = cloned_values });
+            }
+        }
+
+        // Replace the table data with surviving rows
+        if (deleted_count > 0) {
+            const table_name = try self.allocator.dupe(u8, delete.table_name);
+            defer self.allocator.free(table_name);
+            
+            // Get table schema
+            const schema = table.schema;
+            
+            // Drop and recreate table with remaining data
+            try self.connection.storage_engine.dropTable(delete.table_name);
+            try self.connection.storage_engine.createTable(table_name, schema);
+            
+            // Reinsert surviving rows
+            const new_table = self.connection.storage_engine.getTable(delete.table_name).?;
+            for (surviving_rows.items) |row| {
+                // Clone the row for insertion
+                var insert_values = try self.allocator.alloc(storage.Value, row.values.len);
+                for (row.values, 0..) |value, i| {
+                    insert_values[i] = try self.cloneValue(value);
+                }
+                try new_table.insert(storage.Row{ .values = insert_values });
             }
         }
 
@@ -372,8 +494,34 @@ pub fn execute(connection: *db.Connection, parsed: *const ast.Statement) !void {
     var result = try vm.execute(&plan);
     defer result.deinit(connection.allocator);
 
-    // For now, just print the result
-    std.debug.print("Executed statement. Affected rows: {d}, Result rows: {d}\n", .{ result.affected_rows, result.rows.items.len });
+    // Print results based on statement type
+    switch (parsed.*) {
+        .Select => {
+            std.debug.print("┌─ Query Results ─┐\n", .{});
+            if (result.rows.items.len == 0) {
+                std.debug.print("│ No rows found   │\n", .{});
+            } else {
+                for (result.rows.items, 0..) |row, i| {
+                    std.debug.print("│ Row {d}: ", .{i + 1});
+                    for (row.values, 0..) |value, j| {
+                        if (j > 0) std.debug.print(", ", .{});
+                        switch (value) {
+                            .Integer => |int| std.debug.print("{d}", .{int}),
+                            .Text => |text| std.debug.print("'{s}'", .{text}),
+                            .Real => |real| std.debug.print("{d:.2}", .{real}),
+                            .Null => std.debug.print("NULL", .{}),
+                            .Blob => std.debug.print("<blob>", .{}),
+                        }
+                    }
+                    std.debug.print(" │\n", .{});
+                }
+            }
+            std.debug.print("└─ {d} row(s) ─────┘\n", .{result.rows.items.len});
+        },
+        else => {
+            std.debug.print("✅ Statement executed successfully. Affected rows: {d}\n", .{result.affected_rows});
+        },
+    }
 }
 
 test "vm creation" {

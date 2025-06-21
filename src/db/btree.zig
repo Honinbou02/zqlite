@@ -174,15 +174,188 @@ pub const BTree = struct {
         defer node.deinit(self.allocator);
 
         if (node.is_leaf) {
-            // Add all values from this leaf
+            // Add all values from this leaf - must clone them because the node will be freed
             for (0..node.key_count) |i| {
-                try results.append(node.values[i]);
+                const original_row = node.values[i];
+                
+                // Clone the entire row with proper memory management
+                var cloned_values = try self.allocator.alloc(storage.Value, original_row.values.len);
+                for (original_row.values, 0..) |value, j| {
+                    cloned_values[j] = switch (value) {
+                        .Integer => |int| storage.Value{ .Integer = int },
+                        .Real => |real| storage.Value{ .Real = real },
+                        .Text => |text| storage.Value{ .Text = try self.allocator.dupe(u8, text) },
+                        .Blob => |blob| storage.Value{ .Blob = try self.allocator.dupe(u8, blob) },
+                        .Null => storage.Value.Null,
+                    };
+                }
+                
+                try results.append(storage.Row{ .values = cloned_values });
             }
         } else {
             // Recursively collect from all children
             for (0..node.key_count + 1) |i| {
                 try self.collectAllLeafValues(node.children[i], results);
             }
+        }
+    }
+
+    /// Update values in a node that match the predicate
+    fn updateInNode(self: *Self, node: *Node, predicate: fn (*const storage.Row) bool, update_fn: fn (*storage.Row) void, updated_count: *u32) !void {
+        if (node.is_leaf) {
+            for (node.values[0..node.key_count]) |*value| {
+                if (predicate(value)) {
+                    update_fn(value);
+                    updated_count.* += 1;
+                }
+            }
+        } else {
+            for (node.children[0..node.key_count + 1]) |child| {
+                try self.updateInNode(child, predicate, update_fn, updated_count);
+            }
+        }
+    }
+
+    /// Collect values that match (or don't match) a predicate
+    fn collectMatchingLeafValues(self: *Self, node: *Node, results: *std.ArrayList(storage.Row), allocator: std.mem.Allocator, predicate: fn (*const storage.Row) bool, should_match: bool) !void {
+        if (node.is_leaf) {
+            for (node.values[0..node.key_count]) |value| {
+                const matches = predicate(&value);
+                if (matches == should_match) {
+                    // Clone the row
+                    var cloned_values = try allocator.alloc(storage.Value, value.values.len);
+                    for (value.values, 0..) |val, i| {
+                        cloned_values[i] = switch (val) {
+                            .Integer => |int| storage.Value{ .Integer = int },
+                            .Real => |real| storage.Value{ .Real = real },
+                            .Text => |text| storage.Value{ .Text = try allocator.dupe(u8, text) },
+                            .Blob => |blob| storage.Value{ .Blob = try allocator.dupe(u8, blob) },
+                            .Null => storage.Value.Null,
+                        };
+                    }
+                    try results.append(storage.Row{ .values = cloned_values });
+                }
+            }
+        } else {
+            for (node.children[0..node.key_count + 1]) |child| {
+                try self.collectMatchingLeafValues(child, results, allocator, predicate, should_match);
+            }
+        }
+    }
+
+    /// Count all rows in the tree
+    fn countAllRows(self: *Self) u32 {
+        if (self.root == null) return 0;
+        return self.countRowsInNode(self.root.?);
+    }
+
+    /// Count rows in a specific node
+    fn countRowsInNode(self: *Self, node: *Node) u32 {
+        if (node.is_leaf) {
+            return node.key_count;
+        } else {
+            var count: u32 = 0;
+            for (node.children[0..node.key_count + 1]) |child| {
+                count += self.countRowsInNode(child);
+            }
+            return count;
+        }
+    }
+
+    /// Rebuild tree with new set of rows
+    fn rebuildWithRows(self: *Self, rows: []storage.Row) !void {
+        // Clear the current tree
+        if (self.root) |root| {
+            root.deinit(self.allocator);
+            self.allocator.destroy(root);
+            self.root = null;
+        }
+
+        // Insert all rows back
+        for (rows, 0..) |row, i| {
+            try self.insert(@intCast(i), row);
+        }
+    }
+
+    /// Update a row by key
+    fn updateByKey(self: *Self, key: u64, new_row: storage.Row) !bool {
+        if (self.root == null) return false;
+        return try self.updateKeyInNode(self.root.?, key, new_row);
+    }
+
+    /// Delete a row by key
+    fn deleteByKey(self: *Self, key: u64) !bool {
+        if (self.root == null) return false;
+        return try self.deleteKeyInNode(self.root.?, key);
+    }
+
+    /// Update a key in a specific node
+    fn updateKeyInNode(self: *Self, node: *Node, key: u64, new_row: storage.Row) !bool {
+        if (node.is_leaf) {
+            for (node.keys[0..node.key_count], 0..) |k, i| {
+                if (k == key) {
+                    // Free old value
+                    for (node.values[i].values) |value| {
+                        value.deinit(self.allocator);
+                    }
+                    self.allocator.free(node.values[i].values);
+                    
+                    // Clone new value
+                    var cloned_values = try self.allocator.alloc(storage.Value, new_row.values.len);
+                    for (new_row.values, 0..) |val, j| {
+                        cloned_values[j] = switch (val) {
+                            .Integer => |int| storage.Value{ .Integer = int },
+                            .Real => |real| storage.Value{ .Real = real },
+                            .Text => |text| storage.Value{ .Text = try self.allocator.dupe(u8, text) },
+                            .Blob => |blob| storage.Value{ .Blob = try self.allocator.dupe(u8, blob) },
+                            .Null => storage.Value.Null,
+                        };
+                    }
+                    node.values[i] = storage.Row{ .values = cloned_values };
+                    return true;
+                }
+            }
+            return false;
+        } else {
+            // Find appropriate child
+            var i: u32 = 0;
+            while (i < node.key_count and key > node.keys[i]) {
+                i += 1;
+            }
+            return try self.updateKeyInNode(node.children[i], key, new_row);
+        }
+    }
+
+    /// Delete a key from a specific node
+    fn deleteKeyInNode(self: *Self, node: *Node, key: u64) !bool {
+        if (node.is_leaf) {
+            for (node.keys[0..node.key_count], 0..) |k, i| {
+                if (k == key) {
+                    // Free the value
+                    for (node.values[i].values) |value| {
+                        value.deinit(self.allocator);
+                    }
+                    self.allocator.free(node.values[i].values);
+                    
+                    // Shift elements left to fill the gap
+                    var j = i;
+                    while (j < node.key_count - 1) {
+                        node.keys[j] = node.keys[j + 1];
+                        node.values[j] = node.values[j + 1];
+                        j += 1;
+                    }
+                    node.key_count -= 1;
+                    return true;
+                }
+            }
+            return false;
+        } else {
+            // Find appropriate child
+            var i: u32 = 0;
+            while (i < node.key_count and key > node.keys[i]) {
+                i += 1;
+            }
+            return try self.deleteKeyInNode(node.children[i], key);
         }
     }
 

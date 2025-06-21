@@ -350,19 +350,27 @@ pub const InsertStep = struct {
     values: [][]storage.Value,
 
     pub fn deinit(self: *InsertStep, allocator: std.mem.Allocator) void {
+        // Free table name
         allocator.free(self.table_name);
+        
+        // Free columns if they exist
         if (self.columns) |cols| {
             for (cols) |col| {
                 allocator.free(col);
             }
             allocator.free(cols);
         }
+        
+        // Free values properly
         for (self.values) |row| {
+            // Each row is an owned slice of Values
             for (row) |value| {
                 value.deinit(allocator);
             }
+            // Free the row array itself
             allocator.free(row);
         }
+        // Free the values array
         allocator.free(self.values);
     }
 };
