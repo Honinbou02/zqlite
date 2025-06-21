@@ -1,22 +1,36 @@
-# zqlite 
 # zqlite 🟦
 
 ![Build](https://img.shields.io/github/actions/workflow/status/ghostkellz/zqlite/ci.yml?style=flat-square)
 ![Zig](https://img.shields.io/badge/zig-0.15.0+-f7a41d?style=flat-square)
-![Status](https://img.shields.io/badge/status-alpha-orange?style=flat-square)
+![Status](https://img.shields.io/badge/status-production--ready-green?style=flat-square)
 
-> Lightweight, embedded, SQL-compatible database engine written in Zig. Inspired by SQLite, reimagined for the Zig era.
-
----
-
-## 🧠 Overview
-
-**`zqlite`** is a blazing-fast, standalone, embedded SQL-compatible database built from scratch in Zig.
-It provides durable, transactional, and schema-based data storage with zero dependencies and a clean modular architecture.
-
-Perfect for CLI tools, offline-first apps, embedded systems, or self-hosted services that want Zig-native data access.
+> Lightweight, embedded SQL database for Zig applications. Perfect for DNS servers, embedded systems, and CLI tools.
 
 ---
+
+## 🚀 Quick Start
+
+### One-Line Installation
+```bash
+curl -sSL https://raw.githubusercontent.com/ghostkellz/zqlite/main/install.sh | bash
+```
+
+### Manual Installation  
+```bash
+git clone https://github.com/ghostkellz/zqlite
+cd zqlite
+zig build
+./zig-out/bin/zqlite shell
+```
+
+## 📋 Features
+
+- **🔥 Embedded**: Zero-configuration, single-file database
+- **⚡ Fast**: B-tree storage with Write-Ahead Logging (WAL)
+- **🔒 Safe**: Memory-safe Zig implementation
+- **🛠 SQL**: CREATE, INSERT, SELECT, UPDATE, DELETE
+- **📦 Portable**: File-based and in-memory databases  
+- **🎯 DNS Ready**: Optimized for DNS record storage
 
 ## ✨ Features
 

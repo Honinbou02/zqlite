@@ -165,7 +165,7 @@ pub const VirtualMachine = struct {
             for (row_values, 0..) |value, i| {
                 cloned_values[i] = try self.cloneValue(value);
             }
-            
+
             const row = storage.Row{ .values = cloned_values };
             try table.insert(row);
             result.affected_rows += 1;
@@ -269,14 +269,14 @@ pub const VirtualMachine = struct {
         // For now, we'll recreate the table (in a real implementation, we'd have proper update methods)
         const table_name = try self.allocator.dupe(u8, update.table_name);
         defer self.allocator.free(table_name);
-        
+
         // Get table schema
         const schema = table.schema;
-        
+
         // Drop and recreate table with updated data
         try self.connection.storage_engine.dropTable(update.table_name);
         try self.connection.storage_engine.createTable(table_name, schema);
-        
+
         // Reinsert all rows
         const new_table = self.connection.storage_engine.getTable(update.table_name).?;
         for (updated_rows.items) |row| {
@@ -344,14 +344,14 @@ pub const VirtualMachine = struct {
         if (deleted_count > 0) {
             const table_name = try self.allocator.dupe(u8, delete.table_name);
             defer self.allocator.free(table_name);
-            
+
             // Get table schema
             const schema = table.schema;
-            
+
             // Drop and recreate table with remaining data
             try self.connection.storage_engine.dropTable(delete.table_name);
             try self.connection.storage_engine.createTable(table_name, schema);
-            
+
             // Reinsert surviving rows
             const new_table = self.connection.storage_engine.getTable(delete.table_name).?;
             for (surviving_rows.items) |row| {

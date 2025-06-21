@@ -177,7 +177,7 @@ pub const BTree = struct {
             // Add all values from this leaf - must clone them because the node will be freed
             for (0..node.key_count) |i| {
                 const original_row = node.values[i];
-                
+
                 // Clone the entire row with proper memory management
                 var cloned_values = try self.allocator.alloc(storage.Value, original_row.values.len);
                 for (original_row.values, 0..) |value, j| {
@@ -189,7 +189,7 @@ pub const BTree = struct {
                         .Null => storage.Value.Null,
                     };
                 }
-                
+
                 try results.append(storage.Row{ .values = cloned_values });
             }
         } else {
@@ -210,7 +210,7 @@ pub const BTree = struct {
                 }
             }
         } else {
-            for (node.children[0..node.key_count + 1]) |child| {
+            for (node.children[0 .. node.key_count + 1]) |child| {
                 try self.updateInNode(child, predicate, update_fn, updated_count);
             }
         }
@@ -237,7 +237,7 @@ pub const BTree = struct {
                 }
             }
         } else {
-            for (node.children[0..node.key_count + 1]) |child| {
+            for (node.children[0 .. node.key_count + 1]) |child| {
                 try self.collectMatchingLeafValues(child, results, allocator, predicate, should_match);
             }
         }
@@ -255,7 +255,7 @@ pub const BTree = struct {
             return node.key_count;
         } else {
             var count: u32 = 0;
-            for (node.children[0..node.key_count + 1]) |child| {
+            for (node.children[0 .. node.key_count + 1]) |child| {
                 count += self.countRowsInNode(child);
             }
             return count;
@@ -299,7 +299,7 @@ pub const BTree = struct {
                         value.deinit(self.allocator);
                     }
                     self.allocator.free(node.values[i].values);
-                    
+
                     // Clone new value
                     var cloned_values = try self.allocator.alloc(storage.Value, new_row.values.len);
                     for (new_row.values, 0..) |val, j| {
@@ -336,7 +336,7 @@ pub const BTree = struct {
                         value.deinit(self.allocator);
                     }
                     self.allocator.free(node.values[i].values);
-                    
+
                     // Shift elements left to fill the gap
                     var j = i;
                     while (j < node.key_count - 1) {

@@ -1,4 +1,44 @@
-/zig-cache/
+/.zig-cache/
 /zig-out/
+
+# Compiled binaries
 *.o
 *.exe
+*.dll
+*.so
+*.dylib
+
+# Database files (generated during testing)
+*.db
+*.db-wal
+*.db-shm
+*.wal
+
+# Logs
+*.log
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Coverage and profiling
+*.profraw
+*.profdata
+coverage/
+
+# Backup files
+*.bak
+*.backup
+

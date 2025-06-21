@@ -352,7 +352,7 @@ pub const InsertStep = struct {
     pub fn deinit(self: *InsertStep, allocator: std.mem.Allocator) void {
         // Free table name
         allocator.free(self.table_name);
-        
+
         // Free columns if they exist
         if (self.columns) |cols| {
             for (cols) |col| {
@@ -360,7 +360,7 @@ pub const InsertStep = struct {
             }
             allocator.free(cols);
         }
-        
+
         // Free values properly
         for (self.values) |row| {
             // Each row is an owned slice of Values

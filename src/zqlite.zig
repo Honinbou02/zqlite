@@ -21,8 +21,8 @@ pub const vm = @import("executor/vm.zig");
 pub const cli = @import("shell/cli.zig");
 
 // Version and metadata
-pub const version = "0.1.0";
-pub const build_info = "zqlite " ++ version ++ " - Zig-native embedded database";
+pub const version = "0.2.0";
+pub const build_info = "zqlite " ++ version ++ " - Production-ready DNS backend";
 
 // Main API functions
 pub fn open(path: []const u8) !*db.Connection {

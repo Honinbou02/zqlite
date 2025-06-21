@@ -62,4 +62,46 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_unit_tests.step);
     test_step.dependOn(&run_exe_unit_tests.step);
+
+    // Create the PowerDNS example
+    const powerdns_example = b.addExecutable(.{
+        .name = "powerdns_example",
+        .root_source_file = b.path("examples/powerdns_example.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    // Link the library to the example
+    powerdns_example.root_module.addImport("zqlite", lib.root_module);
+
+    // Install the example
+    b.installArtifact(powerdns_example);
+
+    // Create run step for PowerDNS example
+    const run_powerdns_cmd = b.addRunArtifact(powerdns_example);
+    run_powerdns_cmd.step.dependOn(b.getInstallStep());
+
+    const run_powerdns_step = b.step("run-powerdns", "Run the PowerDNS example");
+    run_powerdns_step.dependOn(&run_powerdns_cmd.step);
+
+    // Create the Cipher DNS example
+    const cipher_example = b.addExecutable(.{
+        .name = "cipher_dns",
+        .root_source_file = b.path("examples/cipher_dns.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    // Link the library to the Cipher example
+    cipher_example.root_module.addImport("zqlite", lib.root_module);
+
+    // Install the Cipher example
+    b.installArtifact(cipher_example);
+
+    // Create run step for Cipher DNS example
+    const run_cipher_cmd = b.addRunArtifact(cipher_example);
+    run_cipher_cmd.step.dependOn(b.getInstallStep());
+
+    const run_cipher_step = b.step("run-cipher", "Run the Cipher DNS example");
+    run_cipher_step.dependOn(&run_cipher_cmd.step);
 }
