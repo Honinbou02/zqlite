@@ -1,0 +1,27 @@
+.{
+    .name = "zqlite",
+    .version = "0.2.0",
+    .fingerprint = 0x9fb4d74a8cd3a225,
+    .minimum_zig_version = "0.15.0-dev.822+dd75e7bcb",
+    
+    .dependencies = .{
+        .zcrypto = .{
+            .url = "https://github.com/ghostkellz/zcrypto/archive/main.tar.gz",
+            .hash = "12200000000000000000000000000000000000000000000000000000000000000000",
+        },
+        .tokioz = .{
+            .url = "https://github.com/ghostkellz/tokioz/archive/main.tar.gz", 
+            .hash = "12200000000000000000000000000000000000000000000000000000000000000000",
+        },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon", 
+        "src",
+        "examples",
+        "LICENSE",
+        "README.md",
+        "install.sh",
+    },
+}

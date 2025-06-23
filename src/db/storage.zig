@@ -2,6 +2,9 @@ const std = @import("std");
 const btree = @import("btree.zig");
 const pager = @import("pager.zig");
 
+/// Row identifier type used throughout the database
+pub const RowId = u64;
+
 /// Storage engine that manages tables and data persistence
 pub const StorageEngine = struct {
     allocator: std.mem.Allocator,

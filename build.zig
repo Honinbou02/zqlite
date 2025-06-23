@@ -5,6 +5,17 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // Get dependencies
+    const zcrypto_dep = b.dependency("zcrypto", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const tokioz_dep = b.dependency("tokioz", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     // Create the zqlite library
     const lib = b.addStaticLibrary(.{
         .name = "zqlite",
@@ -12,6 +23,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+
+    // Add dependency modules
+    lib.root_module.addImport("zcrypto", zcrypto_dep.module("zcrypto"));
+    lib.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
 
     // Install the library
     b.installArtifact(lib);
@@ -26,6 +41,8 @@ pub fn build(b: *std.Build) void {
 
     // Link the library to the executable
     exe.root_module.addImport("zqlite", lib.root_module);
+    exe.root_module.addImport("zcrypto", zcrypto_dep.module("zcrypto"));
+    exe.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
 
     // Install the executable
     b.installArtifact(exe);
@@ -104,4 +121,48 @@ pub fn build(b: *std.Build) void {
 
     const run_cipher_step = b.step("run-cipher", "Run the Cipher DNS example");
     run_cipher_step.dependOn(&run_cipher_cmd.step);
+
+    // Create the Next-Gen Database example
+    const nextgen_example = b.addExecutable(.{
+        .name = "nextgen_database",
+        .root_source_file = b.path("examples/nextgen_database.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    // Link all modules to the Next-Gen example
+    nextgen_example.root_module.addImport("zqlite", lib.root_module);
+    nextgen_example.root_module.addImport("zcrypto", zcrypto_dep.module("zcrypto"));
+    nextgen_example.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
+
+    // Install the Next-Gen example
+    b.installArtifact(nextgen_example);
+
+    // Create run step for Next-Gen example
+    const run_nextgen_cmd = b.addRunArtifact(nextgen_example);
+    run_nextgen_cmd.step.dependOn(b.getInstallStep());
+
+    const run_nextgen_step = b.step("run-nextgen", "Run the Next-Generation Database example");
+    run_nextgen_step.dependOn(&run_nextgen_cmd.step);
+
+    // Advanced indexing demo
+    const advanced_indexing_demo = b.addExecutable(.{
+        .name = "advanced_indexing_demo",
+        .root_source_file = b.path("examples/advanced_indexing_demo.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    advanced_indexing_demo.root_module.addImport("zqlite", lib.root_module);
+    advanced_indexing_demo.root_module.addImport("zcrypto", zcrypto_dep.module("zcrypto"));
+    advanced_indexing_demo.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
+    b.installArtifact(advanced_indexing_demo);
+
+    // Run step for advanced indexing demo
+    const run_advanced_indexing = b.addRunArtifact(advanced_indexing_demo);
+    run_advanced_indexing.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        run_advanced_indexing.addArgs(args);
+    }
+    const run_advanced_indexing_step = b.step("run-advanced-indexing", "Run the advanced indexing demo");
+    run_advanced_indexing_step.dependOn(&run_advanced_indexing.step);
 }

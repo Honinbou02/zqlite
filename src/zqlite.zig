@@ -20,9 +20,18 @@ pub const vm = @import("executor/vm.zig");
 // CLI shell
 pub const cli = @import("shell/cli.zig");
 
+// Advanced cryptographic features
+pub const crypto = @import("crypto/secure_storage.zig");
+
+// Async database operations
+pub const async_ops = @import("concurrent/async_operations.zig");
+
+// Advanced indexing
+pub const advanced_indexes = @import("indexing/advanced_indexes.zig");
+
 // Version and metadata
-pub const version = "0.2.0";
-pub const build_info = "zqlite " ++ version ++ " - Production-ready DNS backend";
+pub const version = "0.3.0";
+pub const build_info = "zqlite " ++ version ++ " - Next-generation cryptographic database";
 
 // Main API functions
 pub fn open(path: []const u8) !*db.Connection {
