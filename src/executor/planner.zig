@@ -37,6 +37,12 @@ pub const Planner = struct {
             },
         });
 
+        // JOIN steps
+        for (select.joins) |join| {
+            const join_step = try self.planJoin(select.table, &join);
+            try steps.append(join_step);
+        }
+
         // Filter step (WHERE clause)
         if (select.where_clause) |where_clause| {
             try steps.append(ExecutionStep{
@@ -46,17 +52,68 @@ pub const Planner = struct {
             });
         }
 
-        // Projection step (SELECT columns)
-        var columns = std.ArrayList([]const u8).init(self.allocator);
-        for (select.columns) |column| {
-            try columns.append(try self.allocator.dupe(u8, column.name));
-        }
+        // Check if we have aggregate functions
+        const has_aggregates = self.hasAggregates(select.columns);
+        
+        if (has_aggregates) {
+            // Extract aggregate operations
+            var aggregates = std.ArrayList(AggregateOperation).init(self.allocator);
+            for (select.columns) |column| {
+                if (column.expression == .Aggregate) {
+                    try aggregates.append(AggregateOperation{
+                        .function_type = column.expression.Aggregate.function_type,
+                        .column = if (column.expression.Aggregate.column) |col| 
+                            try self.allocator.dupe(u8, col) 
+                        else 
+                            null,
+                        .alias = if (column.alias) |alias| 
+                            try self.allocator.dupe(u8, alias) 
+                        else 
+                            null,
+                    });
+                }
+            }
+            
+            if (select.group_by) |group_by| {
+                // GROUP BY aggregation
+                var group_columns = std.ArrayList([]const u8).init(self.allocator);
+                for (group_by) |col| {
+                    try group_columns.append(try self.allocator.dupe(u8, col));
+                }
+                
+                try steps.append(ExecutionStep{
+                    .GroupBy = GroupByStep{
+                        .group_columns = try group_columns.toOwnedSlice(),
+                        .aggregates = try aggregates.toOwnedSlice(),
+                    },
+                });
+            } else {
+                // Simple aggregation (no GROUP BY)
+                try steps.append(ExecutionStep{
+                    .Aggregate = AggregateStep{
+                        .aggregates = try aggregates.toOwnedSlice(),
+                    },
+                });
+            }
+        } else {
+            // Regular projection step (SELECT columns)
+            var columns = std.ArrayList([]const u8).init(self.allocator);
+            for (select.columns) |column| {
+                switch (column.expression) {
+                    .Simple => |name| try columns.append(try self.allocator.dupe(u8, name)),
+                    .Aggregate => {
+                        // This shouldn't happen if has_aggregates was false
+                        return error.UnexpectedAggregate;
+                    },
+                }
+            }
 
-        try steps.append(ExecutionStep{
-            .Project = ProjectStep{
-                .columns = try columns.toOwnedSlice(),
-            },
-        });
+            try steps.append(ExecutionStep{
+                .Project = ProjectStep{
+                    .columns = try columns.toOwnedSlice(),
+                },
+            });
+        }
 
         // Limit step
         if (select.limit) |limit| {
@@ -72,6 +129,75 @@ pub const Planner = struct {
             .steps = try steps.toOwnedSlice(),
             .allocator = self.allocator,
         };
+    }
+
+    /// Plan JOIN operation
+    fn planJoin(self: *Self, left_table: []const u8, join: *const ast.JoinClause) !ExecutionStep {
+        // Try to determine if this is an equi-join for hash join optimization
+        const equi_join_info = self.analyzeEquiJoin(&join.condition);
+        
+        if (equi_join_info) |info| {
+            // Use hash join for equi-joins (more efficient for larger datasets)
+            return ExecutionStep{
+                .HashJoin = HashJoinStep{
+                    .join_type = join.join_type,
+                    .left_table = try self.allocator.dupe(u8, left_table),
+                    .right_table = try self.allocator.dupe(u8, join.table),
+                    .left_key_column = try self.allocator.dupe(u8, info.left_column),
+                    .right_key_column = try self.allocator.dupe(u8, info.right_column),
+                    .condition = try self.cloneCondition(&join.condition),
+                },
+            };
+        } else {
+            // Use nested loop join for complex conditions
+            return ExecutionStep{
+                .NestedLoopJoin = NestedLoopJoinStep{
+                    .join_type = join.join_type,
+                    .left_table = try self.allocator.dupe(u8, left_table),
+                    .right_table = try self.allocator.dupe(u8, join.table),
+                    .condition = try self.cloneCondition(&join.condition),
+                },
+            };
+        }
+    }
+
+    /// Analyze if condition is an equi-join (column = column)
+    fn analyzeEquiJoin(self: *Self, condition: *const ast.Condition) ?EquiJoinInfo {
+        _ = self;
+        switch (condition.*) {
+            .Comparison => |comp| {
+                if (comp.operator == .Equal) {
+                    // Check if both sides are column references
+                    if (comp.left == .Column and comp.right == .Column) {
+                        return EquiJoinInfo{
+                            .left_column = comp.left.Column,
+                            .right_column = comp.right.Column,
+                        };
+                    }
+                }
+            },
+            .Logical => {
+                // For now, don't optimize complex logical conditions
+                // Could be enhanced to handle AND of equi-joins
+            },
+        }
+        return null;
+    }
+
+    const EquiJoinInfo = struct {
+        left_column: []const u8,
+        right_column: []const u8,
+    };
+
+    /// Check if any columns contain aggregate functions
+    fn hasAggregates(self: *Self, columns: []ast.Column) bool {
+        _ = self;
+        for (columns) |column| {
+            if (column.expression == .Aggregate) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// Plan INSERT statement execution
@@ -292,6 +418,10 @@ pub const ExecutionStep = union(enum) {
     CreateTable: CreateTableStep,
     Update: UpdateStep,
     Delete: DeleteStep,
+    NestedLoopJoin: NestedLoopJoinStep,
+    HashJoin: HashJoinStep,
+    Aggregate: AggregateStep,
+    GroupBy: GroupByStep,
 
     pub fn deinit(self: *ExecutionStep, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -303,6 +433,10 @@ pub const ExecutionStep = union(enum) {
             .CreateTable => |*step| step.deinit(allocator),
             .Update => |*step| step.deinit(allocator),
             .Delete => |*step| step.deinit(allocator),
+            .NestedLoopJoin => |*step| step.deinit(allocator),
+            .HashJoin => |*step| step.deinit(allocator),
+            .Aggregate => |*step| step.deinit(allocator),
+            .GroupBy => |*step| step.deinit(allocator),
         }
     }
 };
@@ -426,6 +560,84 @@ pub const DeleteStep = struct {
 pub const UpdateAssignment = struct {
     column: []const u8,
     value: storage.Value,
+};
+
+/// Nested loop join step (for small tables or when no indexes available)
+pub const NestedLoopJoinStep = struct {
+    join_type: ast.JoinType,
+    left_table: []const u8,
+    right_table: []const u8,
+    condition: ast.Condition,
+    
+    pub fn deinit(self: *NestedLoopJoinStep, allocator: std.mem.Allocator) void {
+        allocator.free(self.left_table);
+        allocator.free(self.right_table);
+        self.condition.deinit(allocator);
+    }
+};
+
+/// Hash join step (for larger tables with equi-join conditions)
+pub const HashJoinStep = struct {
+    join_type: ast.JoinType,
+    left_table: []const u8,
+    right_table: []const u8,
+    left_key_column: []const u8,
+    right_key_column: []const u8,
+    condition: ast.Condition,
+    
+    pub fn deinit(self: *HashJoinStep, allocator: std.mem.Allocator) void {
+        allocator.free(self.left_table);
+        allocator.free(self.right_table);
+        allocator.free(self.left_key_column);
+        allocator.free(self.right_key_column);
+        self.condition.deinit(allocator);
+    }
+};
+
+/// Aggregate step (for aggregate functions without GROUP BY)
+pub const AggregateStep = struct {
+    aggregates: []AggregateOperation,
+    
+    pub fn deinit(self: *AggregateStep, allocator: std.mem.Allocator) void {
+        for (self.aggregates) |*agg| {
+            agg.deinit(allocator);
+        }
+        allocator.free(self.aggregates);
+    }
+};
+
+/// Group by step (for aggregate functions with GROUP BY)
+pub const GroupByStep = struct {
+    group_columns: [][]const u8,
+    aggregates: []AggregateOperation,
+    
+    pub fn deinit(self: *GroupByStep, allocator: std.mem.Allocator) void {
+        for (self.group_columns) |col| {
+            allocator.free(col);
+        }
+        allocator.free(self.group_columns);
+        
+        for (self.aggregates) |*agg| {
+            agg.deinit(allocator);
+        }
+        allocator.free(self.aggregates);
+    }
+};
+
+/// Aggregate operation definition
+pub const AggregateOperation = struct {
+    function_type: ast.AggregateFunctionType,
+    column: ?[]const u8, // NULL for COUNT(*)
+    alias: ?[]const u8,
+    
+    pub fn deinit(self: *AggregateOperation, allocator: std.mem.Allocator) void {
+        if (self.column) |col| {
+            allocator.free(col);
+        }
+        if (self.alias) |alias| {
+            allocator.free(alias);
+        }
+    }
 };
 
 test "planner creation" {

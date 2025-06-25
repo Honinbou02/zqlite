@@ -44,6 +44,10 @@ pub const VirtualMachine = struct {
             .CreateTable => |*create| try self.executeCreateTable(create, result),
             .Update => |*update| try self.executeUpdate(update, result),
             .Delete => |*delete| try self.executeDelete(delete, result),
+            .NestedLoopJoin => |*join| try self.executeNestedLoopJoin(join, result),
+            .HashJoin => |*join| try self.executeHashJoin(join, result),
+            .Aggregate => |*agg| try self.executeAggregate(agg, result),
+            .GroupBy => |*group| try self.executeGroupBy(group, result),
         }
     }
 
@@ -480,6 +484,201 @@ pub const ExecutionResult = struct {
             allocator.free(row.values);
         }
         self.rows.deinit();
+    }
+
+    /// Execute nested loop join (simple but works for all join types)
+    fn executeNestedLoopJoin(self: *Self, join: *planner.NestedLoopJoinStep, result: *ExecutionResult) !void {
+        // Get tables
+        const left_table = self.connection.storage_engine.getTable(join.left_table) orelse {
+            return error.TableNotFound;
+        };
+        const right_table = self.connection.storage_engine.getTable(join.right_table) orelse {
+            return error.TableNotFound;
+        };
+
+        // Get all rows from both tables
+        const left_rows = try left_table.select(self.allocator);
+        defer {
+            for (left_rows) |row| {
+                for (row.values) |value| {
+                    value.deinit(self.allocator);
+                }
+                self.allocator.free(row.values);
+            }
+            self.allocator.free(left_rows);
+        }
+
+        const right_rows = try right_table.select(self.allocator);
+        defer {
+            for (right_rows) |row| {
+                for (row.values) |value| {
+                    value.deinit(self.allocator);
+                }
+                self.allocator.free(row.values);
+            }
+            self.allocator.free(right_rows);
+        }
+
+        // Perform join logic based on join type
+        for (left_rows) |left_row| {
+            var matched = false;
+            
+            for (right_rows) |right_row| {
+                // Create combined row for condition evaluation
+                const combined_row = try self.combineRows(&left_row, &right_row);
+                defer {
+                    for (combined_row.values) |value| {
+                        value.deinit(self.allocator);
+                    }
+                    self.allocator.free(combined_row.values);
+                }
+
+                // Check join condition
+                if (try self.evaluateCondition(&join.condition, &combined_row)) {
+                    matched = true;
+                    // Add the combined row to results
+                    const final_row = try self.combineRows(&left_row, &right_row);
+                    try result.rows.append(final_row);
+                }
+            }
+
+            // Handle LEFT JOIN case where no match found
+            if (!matched and join.join_type == .Left) {
+                const null_right_row = try self.createNullRow(right_rows[0].values.len);
+                defer {
+                    for (null_right_row.values) |value| {
+                        value.deinit(self.allocator);
+                    }
+                    self.allocator.free(null_right_row.values);
+                }
+                
+                const final_row = try self.combineRows(&left_row, &null_right_row);
+                try result.rows.append(final_row);
+            }
+        }
+
+        // Handle RIGHT JOIN - iterate from right side
+        if (join.join_type == .Right or join.join_type == .Full) {
+            for (right_rows) |right_row| {
+                var matched = false;
+                
+                for (left_rows) |left_row| {
+                    const combined_row = try self.combineRows(&left_row, &right_row);
+                    defer {
+                        for (combined_row.values) |value| {
+                            value.deinit(self.allocator);
+                        }
+                        self.allocator.free(combined_row.values);
+                    }
+
+                    if (try self.evaluateCondition(&join.condition, &combined_row)) {
+                        matched = true;
+                        break; // We already added this in the LEFT side iteration for FULL
+                    }
+                }
+
+                // Add unmatched RIGHT rows for RIGHT and FULL joins
+                if (!matched and (join.join_type == .Right or join.join_type == .Full)) {
+                    const null_left_row = try self.createNullRow(left_rows[0].values.len);
+                    defer {
+                        for (null_left_row.values) |value| {
+                            value.deinit(self.allocator);
+                        }
+                        self.allocator.free(null_left_row.values);
+                    }
+                    
+                    const final_row = try self.combineRows(&null_left_row, &right_row);
+                    try result.rows.append(final_row);
+                }
+            }
+        }
+    }
+
+    /// Execute hash join (optimized for equi-joins)
+    fn executeHashJoin(self: *Self, join: *planner.HashJoinStep, result: *ExecutionResult) !void {
+        // Get tables
+        const left_table = self.connection.storage_engine.getTable(join.left_table) orelse {
+            return error.TableNotFound;
+        };
+        const right_table = self.connection.storage_engine.getTable(join.right_table) orelse {
+            return error.TableNotFound;
+        };
+
+        // Get all rows from both tables
+        const left_rows = try left_table.select(self.allocator);
+        defer {
+            for (left_rows) |row| {
+                for (row.values) |value| {
+                    value.deinit(self.allocator);
+                }
+                self.allocator.free(row.values);
+            }
+            self.allocator.free(left_rows);
+        }
+
+        const right_rows = try right_table.select(self.allocator);
+        defer {
+            for (right_rows) |row| {
+                for (row.values) |value| {
+                    value.deinit(self.allocator);
+                }
+                self.allocator.free(row.values);
+            }
+            self.allocator.free(right_rows);
+        }
+
+        // Build hash table from smaller table (right table for now)
+        var hash_map = std.HashMap(u64, std.ArrayList(storage.Row), std.hash_map.DefaultContext(u64), std.hash_map.default_max_load_percentage).init(self.allocator);
+        defer {
+            var iterator = hash_map.iterator();
+            while (iterator.next()) |entry| {
+                for (entry.value_ptr.items) |row| {
+                    for (row.values) |value| {
+                        value.deinit(self.allocator);
+                    }
+                    self.allocator.free(row.values);
+                }
+                entry.value_ptr.deinit();
+            }
+            hash_map.deinit();
+        }
+
+        // TODO: For now, fall back to nested loop join
+        // Hash join implementation requires column index resolution
+        // which needs schema information
+        return self.executeNestedLoopJoin(&planner.NestedLoopJoinStep{
+            .join_type = join.join_type,
+            .left_table = join.left_table,
+            .right_table = join.right_table,
+            .condition = join.condition,
+        }, result);
+    }
+
+    /// Combine two rows into a single row
+    fn combineRows(self: *Self, left_row: *const storage.Row, right_row: *const storage.Row) !storage.Row {
+        const total_columns = left_row.values.len + right_row.values.len;
+        var combined_values = try self.allocator.alloc(storage.Value, total_columns);
+        
+        // Copy left row values
+        for (left_row.values, 0..) |value, i| {
+            combined_values[i] = try self.cloneValue(value);
+        }
+        
+        // Copy right row values
+        for (right_row.values, 0..) |value, i| {
+            combined_values[left_row.values.len + i] = try self.cloneValue(value);
+        }
+        
+        return storage.Row{ .values = combined_values };
+    }
+
+    /// Create a row with all NULL values
+    fn createNullRow(self: *Self, column_count: usize) !storage.Row {
+        var null_values = try self.allocator.alloc(storage.Value, column_count);
+        for (null_values) |*value| {
+            value.* = storage.Value.Null;
+        }
+        return storage.Row{ .values = null_values };
     }
 };
 

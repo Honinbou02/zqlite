@@ -32,8 +32,8 @@ pub const SelectStatement = struct {
     offset: ?u32,
 
     pub fn deinit(self: *SelectStatement, allocator: std.mem.Allocator) void {
-        for (self.columns) |column| {
-            allocator.free(column.name);
+        for (self.columns) |*column| {
+            column.expression.deinit(allocator);
             if (column.alias) |alias| {
                 allocator.free(alias);
             }
@@ -144,8 +144,42 @@ pub const DeleteStatement = struct {
 
 /// Column in SELECT statement
 pub const Column = struct {
-    name: []const u8,
+    expression: ColumnExpression,
     alias: ?[]const u8,
+};
+
+/// Column expression (can be a simple column or aggregate function)
+pub const ColumnExpression = union(enum) {
+    Simple: []const u8, // Simple column name
+    Aggregate: AggregateFunction,
+    
+    pub fn deinit(self: *ColumnExpression, allocator: std.mem.Allocator) void {
+        switch (self.*) {
+            .Simple => |name| allocator.free(name),
+            .Aggregate => |*agg| agg.deinit(allocator),
+        }
+    }
+};
+
+/// Aggregate function
+pub const AggregateFunction = struct {
+    function_type: AggregateFunctionType,
+    column: ?[]const u8, // NULL for COUNT(*)
+    
+    pub fn deinit(self: *AggregateFunction, allocator: std.mem.Allocator) void {
+        if (self.column) |col| {
+            allocator.free(col);
+        }
+    }
+};
+
+/// Aggregate function types
+pub const AggregateFunctionType = enum {
+    Count,
+    Sum,
+    Avg,
+    Min,
+    Max,
 };
 
 /// Column definition in CREATE TABLE

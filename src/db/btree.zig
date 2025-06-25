@@ -70,23 +70,29 @@ pub const BTree = struct {
             node.insertKey(key, value);
             try self.writeNode(page_id, &node);
         } else {
-            // Find child to insert into
-            var i: u32 = node.key_count;
-            while (i > 0 and key < node.keys[i - 1]) {
-                i -= 1;
+            // Find child to insert into using binary search
+            const search_result = node.binarySearchKey(key);
+            var child_index = search_result.index;
+            
+            // If we found the exact key, we still need to go to the right child
+            if (search_result.found) {
+                child_index += 1;
             }
 
-            var child = try self.readNode(node.children[i]);
+            var child = try self.readNode(node.children[child_index]);
             defer child.deinit(self.allocator);
 
             if (child.isFull()) {
-                try self.splitChild(&node, i);
-                if (key > node.keys[i]) {
-                    i += 1;
-                }
+                try self.splitChild(&node, child_index);
+                // After split, check if we need to adjust child index
+                const new_search = node.binarySearchKey(key);
+                child_index = if (new_search.found or key > node.keys[new_search.index]) 
+                    new_search.index + 1 
+                else 
+                    new_search.index;
             }
 
-            try self.insertNonFull(node.children[i], key, value);
+            try self.insertNonFull(node.children[child_index], key, value);
         }
     }
 
@@ -142,30 +148,28 @@ pub const BTree = struct {
         try self.writeNode(new_child_page, &new_child);
     }
 
-    /// Search within a specific node
+    /// Search within a specific node using binary search
     fn searchNode(self: *Self, page_id: u32, key: u64) !?storage.Row {
         var node = try self.readNode(page_id);
         defer node.deinit(self.allocator);
 
         // Binary search for key
-        var i: u32 = 0;
-        while (i < node.key_count and key > node.keys[i]) {
-            i += 1;
-        }
-
-        if (i < node.key_count and key == node.keys[i]) {
-            // Found key
+        const search_result = node.binarySearchKey(key);
+        
+        if (search_result.found) {
+            // Found exact key
             if (node.is_leaf) {
-                return node.values[i];
+                return node.values[search_result.index];
             }
+            // For internal nodes, we need to continue searching
         }
 
         if (node.is_leaf) {
             return null; // Key not found
         }
 
-        // Search in child
-        return self.searchNode(node.children[i], key);
+        // Search in appropriate child
+        return self.searchNode(node.children[search_result.index], key);
     }
 
     /// Collect all values from leaf nodes (for table scans)
@@ -289,73 +293,69 @@ pub const BTree = struct {
         return try self.deleteKeyInNode(self.root.?, key);
     }
 
-    /// Update a key in a specific node
+    /// Update a key in a specific node using binary search
     fn updateKeyInNode(self: *Self, node: *Node, key: u64, new_row: storage.Row) !bool {
         if (node.is_leaf) {
-            for (node.keys[0..node.key_count], 0..) |k, i| {
-                if (k == key) {
-                    // Free old value
-                    for (node.values[i].values) |value| {
-                        value.deinit(self.allocator);
-                    }
-                    self.allocator.free(node.values[i].values);
-
-                    // Clone new value
-                    var cloned_values = try self.allocator.alloc(storage.Value, new_row.values.len);
-                    for (new_row.values, 0..) |val, j| {
-                        cloned_values[j] = switch (val) {
-                            .Integer => |int| storage.Value{ .Integer = int },
-                            .Real => |real| storage.Value{ .Real = real },
-                            .Text => |text| storage.Value{ .Text = try self.allocator.dupe(u8, text) },
-                            .Blob => |blob| storage.Value{ .Blob = try self.allocator.dupe(u8, blob) },
-                            .Null => storage.Value.Null,
-                        };
-                    }
-                    node.values[i] = storage.Row{ .values = cloned_values };
-                    return true;
+            const search_result = node.binarySearchKey(key);
+            if (search_result.found) {
+                const i = search_result.index;
+                // Free old value
+                for (node.values[i].values) |value| {
+                    value.deinit(self.allocator);
                 }
+                self.allocator.free(node.values[i].values);
+
+                // Clone new value
+                var cloned_values = try self.allocator.alloc(storage.Value, new_row.values.len);
+                for (new_row.values, 0..) |val, j| {
+                    cloned_values[j] = switch (val) {
+                        .Integer => |int| storage.Value{ .Integer = int },
+                        .Real => |real| storage.Value{ .Real = real },
+                        .Text => |text| storage.Value{ .Text = try self.allocator.dupe(u8, text) },
+                        .Blob => |blob| storage.Value{ .Blob = try self.allocator.dupe(u8, blob) },
+                        .Null => storage.Value.Null,
+                    };
+                }
+                node.values[i] = storage.Row{ .values = cloned_values };
+                return true;
             }
             return false;
         } else {
-            // Find appropriate child
-            var i: u32 = 0;
-            while (i < node.key_count and key > node.keys[i]) {
-                i += 1;
-            }
-            return try self.updateKeyInNode(node.children[i], key, new_row);
+            // Find appropriate child using binary search
+            const search_result = node.binarySearchKey(key);
+            const child_index = if (search_result.found) search_result.index + 1 else search_result.index;
+            return try self.updateKeyInNode(node.children[child_index], key, new_row);
         }
     }
 
-    /// Delete a key from a specific node
+    /// Delete a key from a specific node using binary search
     fn deleteKeyInNode(self: *Self, node: *Node, key: u64) !bool {
         if (node.is_leaf) {
-            for (node.keys[0..node.key_count], 0..) |k, i| {
-                if (k == key) {
-                    // Free the value
-                    for (node.values[i].values) |value| {
-                        value.deinit(self.allocator);
-                    }
-                    self.allocator.free(node.values[i].values);
-
-                    // Shift elements left to fill the gap
-                    var j = i;
-                    while (j < node.key_count - 1) {
-                        node.keys[j] = node.keys[j + 1];
-                        node.values[j] = node.values[j + 1];
-                        j += 1;
-                    }
-                    node.key_count -= 1;
-                    return true;
+            const search_result = node.binarySearchKey(key);
+            if (search_result.found) {
+                const i = search_result.index;
+                // Free the value
+                for (node.values[i].values) |value| {
+                    value.deinit(self.allocator);
                 }
+                self.allocator.free(node.values[i].values);
+
+                // Shift elements left to fill the gap
+                var j = i;
+                while (j < node.key_count - 1) {
+                    node.keys[j] = node.keys[j + 1];
+                    node.values[j] = node.values[j + 1];
+                    j += 1;
+                }
+                node.key_count -= 1;
+                return true;
             }
             return false;
         } else {
-            // Find appropriate child
-            var i: u32 = 0;
-            while (i < node.key_count and key > node.keys[i]) {
-                i += 1;
-            }
-            return try self.deleteKeyInNode(node.children[i], key);
+            // Find appropriate child using binary search
+            const search_result = node.binarySearchKey(key);
+            const child_index = if (search_result.found) search_result.index + 1 else search_result.index;
+            return try self.deleteKeyInNode(node.children[child_index], key);
         }
     }
 
@@ -423,19 +423,54 @@ const Node = struct {
         return self.key_count >= self.order - 1;
     }
 
-    /// Insert a key-value pair into a leaf node
+    /// Binary search result structure
+    const SearchResult = struct {
+        index: u32,
+        found: bool,
+    };
+
+    /// Binary search for a key in the node's keys array
+    pub fn binarySearchKey(self: *const Self, key: u64) SearchResult {
+        if (self.key_count == 0) {
+            return SearchResult{ .index = 0, .found = false };
+        }
+
+        var left: u32 = 0;
+        var right: u32 = self.key_count;
+
+        while (left < right) {
+            const mid = left + (right - left) / 2;
+            const mid_key = self.keys[mid];
+
+            if (mid_key == key) {
+                return SearchResult{ .index = mid, .found = true };
+            } else if (mid_key < key) {
+                left = mid + 1;
+            } else {
+                right = mid;
+            }
+        }
+
+        return SearchResult{ .index = left, .found = false };
+    }
+
+    /// Insert a key-value pair into a leaf node using binary search
     pub fn insertKey(self: *Self, key: u64, value: storage.Row) void {
-        // Find insertion point
+        // Find insertion point using binary search
+        const search_result = self.binarySearchKey(key);
+        const insert_index = search_result.index;
+
+        // Shift elements to the right to make space
         var i: u32 = self.key_count;
-        while (i > 0 and self.keys[i - 1] > key) {
+        while (i > insert_index) {
             self.keys[i] = self.keys[i - 1];
             self.values[i] = self.values[i - 1];
             i -= 1;
         }
 
         // Insert new key-value
-        self.keys[i] = key;
-        self.values[i] = value;
+        self.keys[insert_index] = key;
+        self.values[insert_index] = value;
         self.key_count += 1;
     }
 
@@ -591,10 +626,79 @@ const Node = struct {
     }
 };
 
-test "btree creation" {
-    try std.testing.expect(true); // Placeholder
+test "btree binary search performance" {
+    const allocator = std.testing.allocator;
+    
+    // Test binary search on node
+    var node = try Node.initLeaf(allocator, 64);
+    defer node.deinit(allocator);
+    
+    // Insert keys in random order
+    const keys = [_]u64{ 50, 25, 75, 12, 37, 62, 87, 6, 18, 31, 43, 56, 68, 81, 93 };
+    for (keys) |key| {
+        const value = storage.Row{ .values = &[_]storage.Value{storage.Value{ .Integer = @intCast(key) }} };
+        node.insertKey(key, value);
+    }
+    
+    // Test binary search finds all keys
+    for (keys) |key| {
+        const result = node.binarySearchKey(key);
+        try std.testing.expect(result.found);
+        try std.testing.expectEqual(key, node.keys[result.index]);
+    }
+    
+    // Test binary search for non-existent keys
+    const non_existent = [_]u64{ 1, 100, 49, 51 };
+    for (non_existent) |key| {
+        const result = node.binarySearchKey(key);
+        try std.testing.expect(!result.found);
+    }
 }
 
-test "btree insert and search" {
-    try std.testing.expect(true); // Placeholder
+test "btree creation and basic operations" {
+    const allocator = std.testing.allocator;
+    const pager = try pager.Pager.initMemory(allocator);
+    defer pager.deinit();
+    
+    const btree = try BTree.init(allocator, pager);
+    defer btree.deinit();
+    
+    try std.testing.expect(btree.root_page > 0);
+    try std.testing.expectEqual(@as(u32, 64), btree.order);
+}
+
+test "btree insert and search comprehensive" {
+    const allocator = std.testing.allocator;
+    const pager_inst = try pager.Pager.initMemory(allocator);
+    defer pager_inst.deinit();
+    
+    const btree = try BTree.init(allocator, pager_inst);
+    defer btree.deinit();
+    
+    // Insert test data
+    const test_keys = [_]u64{ 10, 20, 5, 15, 25, 3, 7, 12, 18, 22, 30 };
+    for (test_keys, 0..) |key, i| {
+        const value = storage.Row{ 
+            .values = &[_]storage.Value{
+                storage.Value{ .Integer = @intCast(key) },
+                storage.Value{ .Text = try std.fmt.allocPrint(allocator, "value_{d}", .{i}) }
+            }
+        };
+        try btree.insert(key, value);
+    }
+    
+    // Search for all inserted keys
+    for (test_keys) |key| {
+        const result = try btree.search(key);
+        try std.testing.expect(result != null);
+        if (result) |row| {
+            try std.testing.expectEqual(storage.Value{ .Integer = @intCast(key) }, row.values[0]);
+            allocator.free(row.values[1].Text);
+            allocator.free(row.values);
+        }
+    }
+    
+    // Search for non-existent key
+    const not_found = try btree.search(999);
+    try std.testing.expect(not_found == null);
 }

@@ -4,22 +4,55 @@ const crypto = std.crypto;
 /// Simple encryption module for database files
 pub const Encryption = struct {
     key: [32]u8, // 256-bit key
+    salt: [32]u8, // 256-bit salt for key derivation
     enabled: bool,
 
     const Self = @This();
 
-    /// Initialize with a password
-    pub fn init(password: []const u8) !Self {
+    /// Initialize with a password and optional salt (generates random if not provided)
+    pub fn init(password: []const u8, salt_opt: ?[]const u8) !Self {
         var encryption = Self{
             .key = undefined,
+            .salt = undefined,
             .enabled = true,
         };
 
-        // Derive key from password using PBKDF2
+        // Use provided salt or generate random one
+        if (salt_opt) |provided_salt| {
+            if (provided_salt.len != 32) {
+                return error.InvalidSaltLength;
+            }
+            @memcpy(&encryption.salt, provided_salt);
+        } else {
+            // Generate cryptographically secure random salt
+            crypto.random.bytes(&encryption.salt);
+        }
+
+        // Derive key from password using PBKDF2 with random salt
         try crypto.pwhash.pbkdf2(
             &encryption.key,
             password,
-            "zqlite_salt", // Simple salt - in production, use random salt
+            &encryption.salt,
+            4096, // iterations
+            crypto.auth.hmac.sha2.HmacSha256,
+        );
+
+        return encryption;
+    }
+
+    /// Initialize with existing salt (for loading existing database)
+    pub fn initWithSalt(password: []const u8, salt: [32]u8) !Self {
+        var encryption = Self{
+            .key = undefined,
+            .salt = salt,
+            .enabled = true,
+        };
+
+        // Derive key using existing salt
+        try crypto.pwhash.pbkdf2(
+            &encryption.key,
+            password,
+            &salt,
             4096, // iterations
             crypto.auth.hmac.sha2.HmacSha256,
         );
@@ -31,8 +64,21 @@ pub const Encryption = struct {
     pub fn initPlain() Self {
         return Self{
             .key = undefined,
+            .salt = undefined,
             .enabled = false,
         };
+    }
+
+    /// Get the salt for storage in database header
+    pub fn getSalt(self: *const Self) [32]u8 {
+        return self.salt;
+    }
+
+    /// Securely clear sensitive data from memory
+    pub fn deinit(self: *Self) void {
+        // Zero out sensitive data
+        crypto.utils.secureZero(u8, &self.key);
+        crypto.utils.secureZero(u8, &self.salt);
     }
 
     /// Encrypt data
@@ -127,6 +173,56 @@ pub const Encryption = struct {
     }
 };
 
-test "encryption basic" {
-    try std.testing.expect(true); // Placeholder
+test "encryption with random salt" {
+    const allocator = std.testing.allocator;
+    
+    // Test encryption with random salt
+    var enc1 = try Encryption.init("test_password", null);
+    defer enc1.deinit();
+    
+    var enc2 = try Encryption.init("test_password", null);
+    defer enc2.deinit();
+    
+    // Different instances should have different salts
+    try std.testing.expect(!std.mem.eql(u8, &enc1.salt, &enc2.salt));
+    
+    // Test encryption/decryption
+    const plaintext = "Hello, ZQLite encryption!";
+    var encrypted_buf: [1024]u8 = undefined;
+    var decrypted_buf: [1024]u8 = undefined;
+    
+    try enc1.encrypt(plaintext, &encrypted_buf);
+    const encrypted_size = enc1.getEncryptedSize(plaintext.len);
+    
+    try enc1.decrypt(encrypted_buf[0..encrypted_size], &decrypted_buf);
+    const decrypted_size = enc1.getDecryptedSize(encrypted_size);
+    
+    try std.testing.expectEqualStrings(plaintext, decrypted_buf[0..decrypted_size]);
+}
+
+test "encryption with provided salt" {
+    const test_salt = [_]u8{1} ** 32;
+    
+    var enc1 = try Encryption.init("password123", &test_salt);
+    defer enc1.deinit();
+    
+    var enc2 = try Encryption.initWithSalt("password123", test_salt);
+    defer enc2.deinit();
+    
+    // Both should have the same salt and key
+    try std.testing.expectEqualSlices(u8, &enc1.salt, &enc2.salt);
+    try std.testing.expectEqualSlices(u8, &enc1.key, &enc2.key);
+}
+
+test "plaintext mode" {
+    var enc = Encryption.initPlain();
+    defer enc.deinit();
+    
+    try std.testing.expect(!enc.enabled);
+    
+    const data = "unencrypted data";
+    var output: [100]u8 = undefined;
+    
+    try enc.encrypt(data, &output);
+    try std.testing.expectEqualStrings(data, output[0..data.len]);
 }

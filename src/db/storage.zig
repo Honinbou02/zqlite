@@ -1,6 +1,7 @@
 const std = @import("std");
 const btree = @import("btree.zig");
 const pager = @import("pager.zig");
+const memory_pool = @import("memory_pool.zig");
 
 /// Row identifier type used throughout the database
 pub const RowId = u64;
@@ -9,6 +10,8 @@ pub const RowId = u64;
 pub const StorageEngine = struct {
     allocator: std.mem.Allocator,
     pager: *pager.Pager,
+    memory_pool: memory_pool.MemoryPool,
+    pooled_allocator: memory_pool.PooledAllocator,
     tables: std.StringHashMap(*Table),
     indexes: std.StringHashMap(*Index),
     is_memory: bool,
@@ -20,6 +23,8 @@ pub const StorageEngine = struct {
         var engine = try allocator.create(Self);
         engine.allocator = allocator;
         engine.pager = try pager.Pager.init(allocator, path);
+        engine.memory_pool = memory_pool.MemoryPool.init(allocator);
+        engine.pooled_allocator = memory_pool.PooledAllocator.init(&engine.memory_pool);
         engine.tables = std.StringHashMap(*Table).init(allocator);
         engine.indexes = std.StringHashMap(*Index).init(allocator);
         engine.is_memory = false;
@@ -35,11 +40,28 @@ pub const StorageEngine = struct {
         var engine = try allocator.create(Self);
         engine.allocator = allocator;
         engine.pager = try pager.Pager.initMemory(allocator);
+        engine.memory_pool = memory_pool.MemoryPool.init(allocator);
+        engine.pooled_allocator = memory_pool.PooledAllocator.init(&engine.memory_pool);
         engine.tables = std.StringHashMap(*Table).init(allocator);
         engine.indexes = std.StringHashMap(*Index).init(allocator);
         engine.is_memory = true;
 
         return engine;
+    }
+
+    /// Get the pooled allocator for efficient memory management
+    pub fn getPooledAllocator(self: *Self) std.mem.Allocator {
+        return self.pooled_allocator.allocator();
+    }
+
+    /// Get memory pool statistics
+    pub fn getMemoryStats(self: *Self) memory_pool.MemoryPool.GlobalStats {
+        return self.memory_pool.getGlobalStats();
+    }
+
+    /// Cleanup unused memory pools
+    pub fn cleanupMemory(self: *Self) void {
+        self.memory_pool.cleanup();
     }
 
     /// Create a new table
@@ -116,6 +138,7 @@ pub const StorageEngine = struct {
         self.indexes.deinit();
 
         self.pager.deinit();
+        self.memory_pool.deinit();
         self.allocator.destroy(self);
     }
 
