@@ -469,22 +469,6 @@ pub const VirtualMachine = struct {
             },
         };
     }
-};
-
-/// Result of query execution
-pub const ExecutionResult = struct {
-    rows: std.ArrayList(storage.Row),
-    affected_rows: u32,
-
-    pub fn deinit(self: *ExecutionResult, allocator: std.mem.Allocator) void {
-        for (self.rows.items) |row| {
-            for (row.values) |value| {
-                value.deinit(allocator);
-            }
-            allocator.free(row.values);
-        }
-        self.rows.deinit();
-    }
 
     /// Execute nested loop join (simple but works for all join types)
     fn executeNestedLoopJoin(self: *Self, join: *planner.NestedLoopJoinStep, result: *ExecutionResult) !void {
@@ -628,7 +612,7 @@ pub const ExecutionResult = struct {
         }
 
         // Build hash table from smaller table (right table for now)
-        var hash_map = std.HashMap(u64, std.ArrayList(storage.Row), std.hash_map.DefaultContext(u64), std.hash_map.default_max_load_percentage).init(self.allocator);
+        var hash_map = std.AutoHashMap(u64, std.ArrayList(storage.Row)).init(self.allocator);
         defer {
             var iterator = hash_map.iterator();
             while (iterator.next()) |entry| {
@@ -646,12 +630,13 @@ pub const ExecutionResult = struct {
         // TODO: For now, fall back to nested loop join
         // Hash join implementation requires column index resolution
         // which needs schema information
-        return self.executeNestedLoopJoin(&planner.NestedLoopJoinStep{
+        var nested_join = planner.NestedLoopJoinStep{
             .join_type = join.join_type,
             .left_table = join.left_table,
             .right_table = join.right_table,
             .condition = join.condition,
-        }, result);
+        };
+        return self.executeNestedLoopJoin(&nested_join, result);
     }
 
     /// Combine two rows into a single row
@@ -674,11 +659,45 @@ pub const ExecutionResult = struct {
 
     /// Create a row with all NULL values
     fn createNullRow(self: *Self, column_count: usize) !storage.Row {
-        var null_values = try self.allocator.alloc(storage.Value, column_count);
+        const null_values = try self.allocator.alloc(storage.Value, column_count);
         for (null_values) |*value| {
             value.* = storage.Value.Null;
         }
         return storage.Row{ .values = null_values };
+    }
+
+    /// Execute aggregate operation (stub implementation)
+    fn executeAggregate(self: *Self, agg: *planner.AggregateStep, result: *ExecutionResult) !void {
+        _ = self;
+        _ = agg;
+        _ = result;
+        // TODO: Implement aggregate operations
+        return error.NotImplemented;
+    }
+
+    /// Execute group by operation (stub implementation)
+    fn executeGroupBy(self: *Self, group: *planner.GroupByStep, result: *ExecutionResult) !void {
+        _ = self;
+        _ = group;
+        _ = result;
+        // TODO: Implement group by operations
+        return error.NotImplemented;
+    }
+};
+
+/// Result of query execution
+pub const ExecutionResult = struct {
+    rows: std.ArrayList(storage.Row),
+    affected_rows: u32,
+
+    pub fn deinit(self: *ExecutionResult, allocator: std.mem.Allocator) void {
+        for (self.rows.items) |row| {
+            for (row.values) |value| {
+                value.deinit(allocator);
+            }
+            allocator.free(row.values);
+        }
+        self.rows.deinit();
     }
 };
 

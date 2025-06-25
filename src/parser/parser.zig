@@ -44,7 +44,11 @@ pub const Parser = struct {
 
         if (std.meta.activeTag(self.current_token) == .Asterisk) {
             try self.advance();
-            try columns.append(ast.Column{ .name = try self.allocator.dupe(u8, "*"), .alias = null });
+            try columns.append(ast.Column{ 
+                .name = try self.allocator.dupe(u8, "*"), 
+                .expression = ast.ColumnExpression{ .Simple = try self.allocator.dupe(u8, "*") },
+                .alias = null 
+            });
         } else {
             while (true) {
                 const column = try self.parseColumn();
@@ -294,7 +298,11 @@ pub const Parser = struct {
             alias = try self.expectIdentifier();
         }
 
-        return ast.Column{ .name = name, .alias = alias };
+        return ast.Column{ 
+            .name = name, 
+            .expression = ast.ColumnExpression{ .Simple = name },
+            .alias = alias 
+        };
     }
 
     /// Parse a column definition in CREATE TABLE

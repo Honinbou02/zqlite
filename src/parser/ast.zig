@@ -144,6 +144,7 @@ pub const DeleteStatement = struct {
 
 /// Column in SELECT statement
 pub const Column = struct {
+    name: []const u8,
     expression: ColumnExpression,
     alias: ?[]const u8,
 };

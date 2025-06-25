@@ -657,10 +657,10 @@ test "btree binary search performance" {
 
 test "btree creation and basic operations" {
     const allocator = std.testing.allocator;
-    const pager = try pager.Pager.initMemory(allocator);
-    defer pager.deinit();
+    const pager_instance = try pager.Pager.initMemory(allocator);
+    defer pager_instance.deinit();
     
-    const btree = try BTree.init(allocator, pager);
+    const btree = try BTree.init(allocator, pager_instance);
     defer btree.deinit();
     
     try std.testing.expect(btree.root_page > 0);

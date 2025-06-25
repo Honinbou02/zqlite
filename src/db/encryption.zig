@@ -174,7 +174,7 @@ pub const Encryption = struct {
 };
 
 test "encryption with random salt" {
-    const allocator = std.testing.allocator;
+    _ = std.testing.allocator;
     
     // Test encryption with random salt
     var enc1 = try Encryption.init("test_password", null);
