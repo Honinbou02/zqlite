@@ -1,8 +1,11 @@
 .{
-    .name = .zqlite,
+    .name = "zqlite",
     .version = "0.3.0",
     .minimum_zig_version = "0.15.0-dev.822+dd75e7bcb",
     .fingerprint = 0x9fb4d74ad3fa30cb,
+    
+    // Root source file for the package
+    .root = "src/zqlite.zig",
 
     .dependencies = .{
         .zcrypto = .{

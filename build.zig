@@ -31,6 +31,15 @@ pub fn build(b: *std.Build) void {
     // Install the library
     b.installArtifact(lib);
 
+    // Export the zqlite module for use by other packages
+    const zqlite_module = b.addModule("zqlite", .{
+        .root_source_file = b.path("src/zqlite.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    zqlite_module.addImport("zcrypto", zcrypto_dep.module("zcrypto"));
+    zqlite_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
+
     // Create the zqlite executable
     const exe = b.addExecutable(.{
         .name = "zqlite",
