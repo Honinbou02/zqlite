@@ -3,21 +3,21 @@
     .version = "0.3.0",
     .minimum_zig_version = "0.15.0-dev.822+dd75e7bcb",
     .fingerprint = 0x9fb4d74ad3fa30cb,
-    
+
     .dependencies = .{
         .zcrypto = .{
             .url = "https://github.com/ghostkellz/zcrypto/archive/main.tar.gz",
-            .hash = "12202e7f593e522826cc2dc8da1d9f161f6e471d57f37dcae915a4f61e24211d89f4",
+            .hash = "zcrypto-0.0.0-rgQAI8fbAwClmk2Me7c0fNLBtFWbukRh3ZgB2_IckfYz",
         },
         .tokioz = .{
-            .url = "https://github.com/ghostkellz/tokioz/archive/main.tar.gz", 
-            .hash = "12202e19aa0bb500a6fc4f9403fee3fd300643c92457e9ad8f3e1504f77820f716b9",
+            .url = "https://github.com/ghostkellz/tokioz/archive/main.tar.gz",
+            .hash = "TokioZ-0.0.0-DgtPReljAgAuGaoLtQCm_E-UA_7j_TAGQ8kkV-mtjz4V",
         },
     },
 
     .paths = .{
         "build.zig",
-        "build.zig.zon", 
+        "build.zig.zon",
         "src",
         "examples",
         "LICENSE",
