@@ -69,6 +69,7 @@ pub const CryptoEngine = struct {
 
     /// Generate hybrid classical + post-quantum key pairs
     fn generatePQKeyPair(self: *Self) !PQKeyPair {
+        _ = self;
         var seed: [32]u8 = undefined;
         zcrypto.rand.fillBytes(&seed);
 

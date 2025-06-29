@@ -4,12 +4,15 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    
+    // Feature flags
+    const enable_crypto = b.option(bool, "enable_crypto", "Enable advanced cryptographic features") orelse false;
 
-    // Get dependencies
-    const zcrypto_dep = b.dependency("zcrypto", .{
+    // Get dependencies conditionally
+    const zcrypto_dep = if (enable_crypto) b.dependency("zcrypto", .{
         .target = target,
         .optimize = optimize,
-    });
+    }) else null;
 
     const tokioz_dep = b.dependency("tokioz", .{
         .target = target,
@@ -25,7 +28,9 @@ pub fn build(b: *std.Build) void {
     });
 
     // Add dependency modules
-    lib.root_module.addImport("zcrypto", zcrypto_dep.module("zcrypto"));
+    if (zcrypto_dep) |dep| {
+        lib.root_module.addImport("zcrypto", dep.module("zcrypto"));
+    }
     lib.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
 
     // Install the library
@@ -37,7 +42,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    zqlite_module.addImport("zcrypto", zcrypto_dep.module("zcrypto"));
+    if (zcrypto_dep) |dep| {
+        zqlite_module.addImport("zcrypto", dep.module("zcrypto"));
+    }
     zqlite_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
 
     // Create the zqlite executable
@@ -50,7 +57,9 @@ pub fn build(b: *std.Build) void {
 
     // Link the library to the executable
     exe.root_module.addImport("zqlite", lib.root_module);
-    exe.root_module.addImport("zcrypto", zcrypto_dep.module("zcrypto"));
+    if (zcrypto_dep) |dep| {
+        exe.root_module.addImport("zcrypto", dep.module("zcrypto"));
+    }
     exe.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
 
     // Install the executable
@@ -141,7 +150,9 @@ pub fn build(b: *std.Build) void {
 
     // Link all modules to the Next-Gen example
     nextgen_example.root_module.addImport("zqlite", lib.root_module);
-    nextgen_example.root_module.addImport("zcrypto", zcrypto_dep.module("zcrypto"));
+    if (zcrypto_dep) |dep| {
+        nextgen_example.root_module.addImport("zcrypto", dep.module("zcrypto"));
+    }
     nextgen_example.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
 
     // Install the Next-Gen example
@@ -162,7 +173,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     advanced_indexing_demo.root_module.addImport("zqlite", lib.root_module);
-    advanced_indexing_demo.root_module.addImport("zcrypto", zcrypto_dep.module("zcrypto"));
+    if (zcrypto_dep) |dep| {
+        advanced_indexing_demo.root_module.addImport("zcrypto", dep.module("zcrypto"));
+    }
     advanced_indexing_demo.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
     b.installArtifact(advanced_indexing_demo);
 
@@ -183,7 +196,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     pq_showcase_example.root_module.addImport("zqlite", lib.root_module);
-    pq_showcase_example.root_module.addImport("zcrypto", zcrypto_dep.module("zcrypto"));
+    if (zcrypto_dep) |dep| {
+        pq_showcase_example.root_module.addImport("zcrypto", dep.module("zcrypto"));
+    }
     pq_showcase_example.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
     b.installArtifact(pq_showcase_example);
 
@@ -200,7 +215,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     banking_example.root_module.addImport("zqlite", lib.root_module);
-    banking_example.root_module.addImport("zcrypto", zcrypto_dep.module("zcrypto"));
+    if (zcrypto_dep) |dep| {
+        banking_example.root_module.addImport("zcrypto", dep.module("zcrypto"));
+    }
     banking_example.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
     b.installArtifact(banking_example);
 

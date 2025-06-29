@@ -5,8 +5,8 @@
 
     .dependencies = .{
         .zcrypto = .{
-            .url = "https://github.com/ghostkellz/zcrypto/archive/v0.5.0.tar.gz",
-            .hash = "zcrypto-0.5.0-rgQAI8fbAwClmk2Me7c0fNLBtFWbukRh3ZgB2_IckfYz",
+            .url = "https://github.com/ghostkellz/zcrypto/archive/main.tar.gz",
+            .hash = "1220706317f3f8d347c896d6cc9aa769c83d3c3ac439c062c1fec3317de866ef1d45",
         },
         .tokioz = .{
             .url = "https://github.com/ghostkellz/tokioz/archive/main.tar.gz",

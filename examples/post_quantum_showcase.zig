@@ -172,8 +172,8 @@ fn demoPostQuantumQuic(allocator: std.mem.Allocator) !void {
     std.debug.print("🌐 Demo 4: Post-Quantum QUIC Transport\n");
     std.debug.print("------------------------------------\n");
 
-    const PQQuicTransport = @import("../src/transport/pq_quic.zig").PQQuicTransport;
-    const PQDatabaseTransport = @import("../src/transport/pq_quic.zig").PQDatabaseTransport;
+    const PQQuicTransport = zqlite.transport.PQQuicTransport;
+    const PQDatabaseTransport = zqlite.transport.PQDatabaseTransport;
 
     // Create post-quantum QUIC server
     var server = PQQuicTransport.init(allocator, true);

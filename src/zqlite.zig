@@ -20,11 +20,14 @@ pub const vm = @import("executor/vm.zig");
 // CLI shell
 pub const cli = @import("shell/cli.zig");
 
-// Advanced cryptographic features
-pub const crypto = @import("crypto/secure_storage.zig");
+// Advanced cryptographic features (optional)
+pub const crypto = struct {};
 
 // Async database operations
 pub const async_ops = @import("concurrent/async_operations.zig");
+
+// Post-quantum transport (optional)
+pub const transport = struct {};
 
 // Advanced indexing
 pub const advanced_indexes = @import("indexing/advanced_indexes.zig");
