@@ -174,4 +174,38 @@ pub fn build(b: *std.Build) void {
     }
     const run_advanced_indexing_step = b.step("run-advanced-indexing", "Run the advanced indexing demo");
     run_advanced_indexing_step.dependOn(&run_advanced_indexing.step);
+
+    // Post-Quantum Showcase Example (NEW in v0.5.0)
+    const pq_showcase_example = b.addExecutable(.{
+        .name = "post_quantum_showcase",
+        .root_source_file = b.path("examples/post_quantum_showcase.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    pq_showcase_example.root_module.addImport("zqlite", lib.root_module);
+    pq_showcase_example.root_module.addImport("zcrypto", zcrypto_dep.module("zcrypto"));
+    pq_showcase_example.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
+    b.installArtifact(pq_showcase_example);
+
+    const run_pq_showcase = b.addRunArtifact(pq_showcase_example);
+    run_pq_showcase.step.dependOn(b.getInstallStep());
+    const run_pq_showcase_step = b.step("run-pq-showcase", "Run the post-quantum showcase demo");
+    run_pq_showcase_step.dependOn(&run_pq_showcase.step);
+
+    // Hybrid Crypto Banking Example (NEW in v0.5.0)
+    const banking_example = b.addExecutable(.{
+        .name = "hybrid_crypto_banking",
+        .root_source_file = b.path("examples/hybrid_crypto_banking.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    banking_example.root_module.addImport("zqlite", lib.root_module);
+    banking_example.root_module.addImport("zcrypto", zcrypto_dep.module("zcrypto"));
+    banking_example.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
+    b.installArtifact(banking_example);
+
+    const run_banking = b.addRunArtifact(banking_example);
+    run_banking.step.dependOn(b.getInstallStep());
+    const run_banking_step = b.step("run-banking", "Run the hybrid crypto banking demo");
+    run_banking_step.dependOn(&run_banking.step);
 }

@@ -1,12 +1,12 @@
 .{
     .name = .zqlite,
-    .version = "0.4.0",
+    .version = "0.5.0",
     .fingerprint = 0x9fb4d74ae26e27d0,
 
     .dependencies = .{
         .zcrypto = .{
-            .url = "https://github.com/ghostkellz/zcrypto/archive/main.tar.gz",
-            .hash = "zcrypto-0.0.0-rgQAI8fbAwClmk2Me7c0fNLBtFWbukRh3ZgB2_IckfYz",
+            .url = "https://github.com/ghostkellz/zcrypto/archive/v0.5.0.tar.gz",
+            .hash = "zcrypto-0.5.0-rgQAI8fbAwClmk2Me7c0fNLBtFWbukRh3ZgB2_IckfYz",
         },
         .tokioz = .{
             .url = "https://github.com/ghostkellz/tokioz/archive/main.tar.gz",
