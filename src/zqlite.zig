@@ -2,6 +2,7 @@ const std = @import("std");
 
 // Core database modules
 pub const db = @import("db/connection.zig");
+pub const Connection = db.Connection;  // Export for convenience
 pub const storage = @import("db/storage.zig");
 pub const btree = @import("db/btree.zig");
 pub const wal = @import("db/wal.zig");
@@ -21,13 +22,27 @@ pub const vm = @import("executor/vm.zig");
 pub const cli = @import("shell/cli.zig");
 
 // Advanced cryptographic features (optional)
-pub const crypto = struct {};
+pub const crypto = struct {
+    pub const CryptoEngine = @import("crypto/secure_storage.zig").CryptoEngine;
+    pub const CryptoTransactionLog = @import("crypto/secure_storage.zig").CryptoTransactionLog;
+    pub const EncryptedField = struct {
+        ciphertext: []u8,
+        nonce: [12]u8,
+        tag: [16]u8,
+
+        pub fn deinit(self: *EncryptedField, allocator: std.mem.Allocator) void {
+            allocator.free(self.ciphertext);
+        }
+    };
+};
 
 // Async database operations
 pub const async_ops = @import("concurrent/async_operations.zig");
 
 // Post-quantum transport (optional)
-pub const transport = struct {};
+pub const transport = struct {
+    pub const Transport = @import("transport/transport.zig").Transport;
+};
 
 // Advanced indexing
 pub const advanced_indexes = @import("indexing/advanced_indexes.zig");

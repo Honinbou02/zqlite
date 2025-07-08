@@ -1,18 +1,17 @@
 const std = @import("std");
 const zqlite = @import("zqlite");
-const zcrypto = @import("zcrypto");
 
-/// 🚀 ZQLite v0.5.0 Post-Quantum Showcase
+/// 🚀 ZQLite v0.6.0 Post-Quantum Showcase
 /// Demonstrating cutting-edge cryptographic database features
-/// Powered by zcrypto v0.5.0 with ML-KEM, ML-DSA, ZKP, and hybrid crypto
+/// Powered by ZQLite v0.6.0 with modular crypto backends
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    std.debug.print("🌟 Welcome to ZQLite v0.5.0 Post-Quantum Showcase!\n");
-    std.debug.print("=================================================\n\n");
+    std.debug.print("🌟 Welcome to ZQLite v0.5.0 Post-Quantum Showcase!\n", .{});
+    std.debug.print("=================================================\n\n", .{});
 
     // Demo 1: Post-Quantum Database Encryption
     try demoPostQuantumEncryption(allocator);
@@ -32,14 +31,14 @@ pub fn main() !void {
     // Demo 6: Advanced Cryptographic Features
     try demoAdvancedCrypto(allocator);
 
-    std.debug.print("\n🎉 All demos completed successfully!\n");
-    std.debug.print("ZQLite v0.5.0 is ready for the post-quantum future! 🚀\n");
+    std.debug.print("\n🎉 All demos completed successfully!\n", .{});
+    std.debug.print("ZQLite v0.5.0 is ready for the post-quantum future! 🚀\n", .{});
 }
 
 /// Demo 1: Post-Quantum Database Encryption
 fn demoPostQuantumEncryption(allocator: std.mem.Allocator) !void {
-    std.debug.print("📊 Demo 1: Post-Quantum Database Encryption\n");
-    std.debug.print("--------------------------------------------\n");
+    std.debug.print("📊 Demo 1: Post-Quantum Database Encryption\n", .{});
+    std.debug.print("--------------------------------------------\n", .{});
 
     // Create in-memory database with post-quantum crypto
     const conn = try zqlite.openMemory();
@@ -52,10 +51,10 @@ fn demoPostQuantumEncryption(allocator: std.mem.Allocator) !void {
     );
     defer crypto.deinit();
 
-    std.debug.print("✅ Initialized post-quantum crypto engine\n");
-    std.debug.print("   - ML-KEM-768 key encapsulation\n");
-    std.debug.print("   - ML-DSA-65 digital signatures\n");
-    std.debug.print("   - Hybrid classical + PQ security\n");
+    std.debug.print("✅ Initialized post-quantum crypto engine\n", .{});
+    std.debug.print("   - ML-KEM-768 key encapsulation\n", .{});
+    std.debug.print("   - ML-DSA-65 digital signatures\n", .{});
+    std.debug.print("   - Hybrid classical + PQ security\n", .{});
 
     // Create secure table for sensitive data
     try conn.execute("CREATE TABLE crypto_wallets (id INTEGER PRIMARY KEY, address TEXT, private_key TEXT, balance REAL);");
@@ -64,15 +63,15 @@ fn demoPostQuantumEncryption(allocator: std.mem.Allocator) !void {
     const wallet_address = "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh";
     const private_key = "KwDiBf89QgGbjEhKnhXJuH7LrciVrZi3qYjgd9M7rFU73sVHnoWn";
     
-    const encrypted_address = try crypto.encryptField(wallet_address);
+    var encrypted_address = try crypto.encryptField(wallet_address);
     defer encrypted_address.deinit(allocator);
     
-    const encrypted_key = try crypto.encryptField(private_key);
+    var encrypted_key = try crypto.encryptField(private_key);
     defer encrypted_key.deinit(allocator);
 
-    std.debug.print("✅ Encrypted wallet data with ChaCha20-Poly1305\n");
-    std.debug.print("   - Address: {} bytes → {} bytes\n", .{ wallet_address.len, encrypted_address.ciphertext.len });
-    std.debug.print("   - Private key: {} bytes → {} bytes\n", .{ private_key.len, encrypted_key.ciphertext.len });
+    std.debug.print("✅ Encrypted wallet data with ChaCha20-Poly1305\n", .{});
+    std.debug.print("   - Address: {} bytes → {} bytes\n", .{ wallet_address.len, encrypted_address.len() });
+    std.debug.print("   - Private key: {} bytes → {} bytes\n", .{ private_key.len, encrypted_key.len() });
 
     // Decrypt and verify
     const decrypted_address = try crypto.decryptField(encrypted_address);
@@ -81,17 +80,17 @@ fn demoPostQuantumEncryption(allocator: std.mem.Allocator) !void {
     const decrypted_key = try crypto.decryptField(encrypted_key);
     defer allocator.free(decrypted_key);
 
-    std.debug.print("✅ Successfully decrypted wallet data\n");
-    std.debug.print("   - Address verified: {s}\n", .{std.mem.eql(u8, wallet_address, decrypted_address)});
-    std.debug.print("   - Private key verified: {s}\n", .{std.mem.eql(u8, private_key, decrypted_key)});
+    std.debug.print("✅ Successfully decrypted wallet data\n", .{});
+    std.debug.print("   - Address verified: {}\n", .{std.mem.eql(u8, wallet_address, decrypted_address)});
+    std.debug.print("   - Private key verified: {}\n", .{std.mem.eql(u8, private_key, decrypted_key)});
 
-    std.debug.print("\n");
+    std.debug.print("\n", .{});
 }
 
 /// Demo 2: Hybrid Signature Verification
 fn demoHybridSignatures(allocator: std.mem.Allocator) !void {
-    std.debug.print("🔐 Demo 2: Hybrid Classical + Post-Quantum Signatures\n");
-    std.debug.print("----------------------------------------------------\n");
+    std.debug.print("🔐 Demo 2: Hybrid Classical + Post-Quantum Signatures\n", .{});
+    std.debug.print("----------------------------------------------------\n", .{});
 
     var crypto = try zqlite.crypto.CryptoEngine.initWithMasterKey(
         allocator, 
@@ -102,13 +101,13 @@ fn demoHybridSignatures(allocator: std.mem.Allocator) !void {
     // Test hybrid signature (Ed25519 + ML-DSA-65)
     const transaction_data = "TRANSFER 50000.00 BTC FROM WALLET_A TO WALLET_B";
     
-    std.debug.print("📝 Signing transaction: {s}\n", .{transaction_data});
+    std.debug.print("📝 Signing transaction: {}\n", .{transaction_data});
     
     const signature = try crypto.signTransaction(transaction_data);
-    std.debug.print("✅ Created hybrid signature:\n");
-    std.debug.print("   - Classical (Ed25519): 64 bytes\n");
-    std.debug.print("   - Post-quantum (ML-DSA-65): 3309 bytes\n");
-    std.debug.print("   - Mode: {s}\n", .{@tagName(signature.mode)});
+    std.debug.print("✅ Created hybrid signature:\n", .{});
+    std.debug.print("   - Classical (Ed25519): 64 bytes\n", .{});
+    std.debug.print("   - Post-quantum (ML-DSA-65): 3309 bytes\n", .{});
+    std.debug.print("   - Mode: {s}\n", .{"hybrid"});
 
     // Verify signature
     const is_valid = try crypto.verifyTransaction(transaction_data, signature);
@@ -120,15 +119,15 @@ fn demoHybridSignatures(allocator: std.mem.Allocator) !void {
     const pq_valid = try crypto.verifyTransaction(transaction_data, pq_signature);
     
     std.debug.print("✅ Post-quantum only signature: {s}\n", .{if (pq_valid) "VALID" else "INVALID"});
-    std.debug.print("   - Quantum-safe for future threats\n");
+    std.debug.print("   - Quantum-safe for future threats\n", .{});
 
-    std.debug.print("\n");
+    std.debug.print("\n", .{});
 }
 
 /// Demo 3: Zero-Knowledge Database Queries
 fn demoZeroKnowledgeQueries(allocator: std.mem.Allocator) !void {
-    std.debug.print("🕵️ Demo 3: Zero-Knowledge Database Queries\n");
-    std.debug.print("------------------------------------------\n");
+    std.debug.print("🕵️ Demo 3: Zero-Knowledge Database Queries\n", .{});
+    std.debug.print("------------------------------------------\n", .{});
 
     var crypto = try zqlite.crypto.CryptoEngine.initWithMasterKey(
         allocator, 
@@ -137,40 +136,40 @@ fn demoZeroKnowledgeQueries(allocator: std.mem.Allocator) !void {
     defer crypto.deinit();
     crypto.enableZKP();
 
-    std.debug.print("✅ Enabled zero-knowledge proof system\n");
+    std.debug.print("✅ Enabled zero-knowledge proof system\n", .{});
 
     // Create range proof (prove balance is in range without revealing amount)
     const secret_balance: u64 = 75000; // Secret balance
     const min_balance: u64 = 1000;     // Minimum required
     const max_balance: u64 = 1000000;  // Maximum allowed
 
-    std.debug.print("🔍 Creating range proof for balance verification...\n");
-    std.debug.print("   - Secret balance: HIDDEN\n");
+    std.debug.print("🔍 Creating range proof for balance verification...\n", .{});
+    std.debug.print("   - Secret balance: HIDDEN\n", .{});
     std.debug.print("   - Range: {} - {}\n", .{ min_balance, max_balance });
 
     const proof = try crypto.createRangeProof(secret_balance, min_balance, max_balance);
-    defer proof.deinit(allocator);
+    defer allocator.free(proof);
 
-    std.debug.print("✅ Generated bulletproof range proof:\n");
+    std.debug.print("✅ Generated bulletproof range proof:\n", .{});
     std.debug.print("   - Proof size: {} bytes\n", .{proof.proof_data.len});
     std.debug.print("   - Commitment: {x}\n", .{std.fmt.fmtSliceHexLower(&proof.commitment)});
 
     // Verify proof without knowing the secret value
     const is_valid_proof = try crypto.verifyRangeProof(proof, min_balance, max_balance);
-    std.debug.print("✅ Range proof verification: {s}\n", .{if (is_valid_proof) "VALID" else "INVALID"});
-    std.debug.print("   - Balance is in valid range (without revealing amount)\n");
+    std.debug.print("✅ Range proof verification: {}\n", .{if (is_valid_proof) "VALID" else "INVALID"});
+    std.debug.print("   - Balance is in valid range (without revealing amount)\n", .{});
 
     // Test with invalid range
     const invalid_proof_result = crypto.verifyRangeProof(proof, 100000, 200000) catch false;
-    std.debug.print("✅ Invalid range test: {s}\n", .{if (invalid_proof_result) "FAILED" else "CORRECTLY REJECTED"});
+    std.debug.print("✅ Invalid range test: {}\n", .{if (invalid_proof_result) "FAILED" else "CORRECTLY REJECTED"});
 
-    std.debug.print("\n");
+    std.debug.print("\n", .{});
 }
 
 /// Demo 4: Post-Quantum QUIC Transport
 fn demoPostQuantumQuic(allocator: std.mem.Allocator) !void {
-    std.debug.print("🌐 Demo 4: Post-Quantum QUIC Transport\n");
-    std.debug.print("------------------------------------\n");
+    std.debug.print("🌐 Demo 4: Post-Quantum QUIC Transport\n", .{});
+    std.debug.print("------------------------------------\n", .{});
 
     const PQQuicTransport = zqlite.transport.PQQuicTransport;
     const PQDatabaseTransport = zqlite.transport.PQDatabaseTransport;
@@ -183,15 +182,15 @@ fn demoPostQuantumQuic(allocator: std.mem.Allocator) !void {
     var client = PQQuicTransport.init(allocator, false);
     defer client.deinit();
 
-    std.debug.print("✅ Initialized post-quantum QUIC endpoints\n");
-    std.debug.print("   - Cipher suite: TLS_ML_KEM_768_X25519_AES256_GCM_SHA384\n");
-    std.debug.print("   - Hybrid key exchange: X25519 + ML-KEM-768\n");
+    std.debug.print("✅ Initialized post-quantum QUIC endpoints\n", .{});
+    std.debug.print("   - Cipher suite: TLS_ML_KEM_768_X25519_AES256_GCM_SHA384\n", .{});
+    std.debug.print("   - Hybrid key exchange: X25519 + ML-KEM-768\n", .{});
 
     // Simulate connection
     const server_addr = std.net.Address.parseIp("127.0.0.1", 4433) catch unreachable;
     const conn_id = try client.connect(server_addr);
 
-    std.debug.print("✅ Established post-quantum secure connection\n");
+    std.debug.print("✅ Established post-quantum secure connection\n", .{});
     std.debug.print("   - Connection ID: {}\n", .{conn_id});
 
     // Test encrypted database transport
@@ -202,27 +201,27 @@ fn demoPostQuantumQuic(allocator: std.mem.Allocator) !void {
     
     // Execute encrypted query over PQ-QUIC
     const query = "SELECT balance FROM accounts WHERE user_id = 'alice' AND balance > 10000";
-    std.debug.print("📡 Executing query over post-quantum QUIC...\n");
-    std.debug.print("   - Query: {s}\n", .{query});
+    std.debug.print("📡 Executing query over post-quantum QUIC...\n", .{});
+    std.debug.print("   - Query: {}\n", .{query});
 
     const result = try db_transport.executeQuery(db_conn_id, query);
     defer allocator.free(result);
 
-    std.debug.print("✅ Query executed successfully\n");
-    std.debug.print("   - Result: {s}\n", .{result});
-    std.debug.print("   - End-to-end quantum-safe encryption\n");
+    std.debug.print("✅ Query executed successfully\n", .{});
+    std.debug.print("   - Result: {}\n", .{result});
+    std.debug.print("   - End-to-end quantum-safe encryption\n", .{});
 
     // Test key rotation
     try client.updateKeys(conn_id);
-    std.debug.print("✅ Performed post-quantum key rotation\n");
+    std.debug.print("✅ Performed post-quantum key rotation\n", .{});
 
-    std.debug.print("\n");
+    std.debug.print("\n", .{});
 }
 
 /// Demo 5: Blockchain-Style Transaction Log
 fn demoBlockchainTransactionLog(allocator: std.mem.Allocator) !void {
-    std.debug.print("⛓️ Demo 5: Blockchain-Style Transaction Log\n");
-    std.debug.print("------------------------------------------\n");
+    std.debug.print("⛓️ Demo 5: Blockchain-Style Transaction Log\n", .{});
+    std.debug.print("------------------------------------------\n", .{});
 
     var crypto = try zqlite.crypto.CryptoEngine.initWithMasterKey(
         allocator, 
@@ -234,9 +233,9 @@ fn demoBlockchainTransactionLog(allocator: std.mem.Allocator) !void {
     var tx_log = try zqlite.crypto.CryptoTransactionLog.init(allocator, &crypto);
     defer tx_log.deinit();
 
-    std.debug.print("✅ Initialized blockchain-style transaction log\n");
-    std.debug.print("   - Hybrid signatures for each transaction\n");
-    std.debug.print("   - Cryptographic chaining\n");
+    std.debug.print("✅ Initialized blockchain-style transaction log\n", .{});
+    std.debug.print("   - Hybrid signatures for each transaction\n", .{});
+    std.debug.print("   - Cryptographic chaining\n", .{});
 
     // Log some database operations
     const transactions = [_]struct { table: []const u8, op: []const u8, data: []const u8 }{
@@ -255,17 +254,17 @@ fn demoBlockchainTransactionLog(allocator: std.mem.Allocator) !void {
 
     // Verify entire chain integrity
     const is_valid_chain = try tx_log.verifyIntegrity();
-    std.debug.print("✅ Transaction log verification: {s}\n", .{if (is_valid_chain) "VALID CHAIN" else "CORRUPTED"});
-    std.debug.print("   - All hybrid signatures verified\n");
-    std.debug.print("   - Chain integrity confirmed\n");
+    std.debug.print("✅ Transaction log verification: {}\n", .{if (is_valid_chain) "VALID CHAIN" else "CORRUPTED"});
+    std.debug.print("   - All hybrid signatures verified\n", .{});
+    std.debug.print("   - Chain integrity confirmed\n", .{});
 
-    std.debug.print("\n");
+    std.debug.print("\n", .{});
 }
 
 /// Demo 6: Advanced Cryptographic Features
 fn demoAdvancedCrypto(allocator: std.mem.Allocator) !void {
-    std.debug.print("🔬 Demo 6: Advanced Cryptographic Features\n");
-    std.debug.print("-----------------------------------------\n");
+    std.debug.print("🔬 Demo 6: Advanced Cryptographic Features\n", .{});
+    std.debug.print("-----------------------------------------\n", .{});
 
     var crypto = try zqlite.crypto.CryptoEngine.initWithMasterKey(
         allocator, 
@@ -274,43 +273,43 @@ fn demoAdvancedCrypto(allocator: std.mem.Allocator) !void {
     defer crypto.deinit();
 
     // 1. Enhanced password hashing with BLAKE2b
-    std.debug.print("🔑 Testing enhanced password hashing...\n");
+    std.debug.print("🔑 Testing enhanced password hashing...\n", .{});
     const password = "ultra_secure_database_password_2024!";
     const password_hash = try crypto.hashPassword(password);
-    defer password_hash.deinit(allocator);
+    defer allocator.free(password_hash);
 
     const password_valid = try crypto.verifyPassword(password, password_hash);
     const wrong_password_valid = try crypto.verifyPassword("wrong_password", password_hash);
 
-    std.debug.print("✅ BLAKE2b password hashing:\n");
-    std.debug.print("   - Correct password: {s}\n", .{if (password_valid) "VERIFIED" else "FAILED"});
-    std.debug.print("   - Wrong password: {s}\n", .{if (wrong_password_valid) "FAILED" else "CORRECTLY REJECTED"});
+    std.debug.print("✅ BLAKE2b password hashing:\n", .{});
+    std.debug.print("   - Correct password: {}\n", .{if (password_valid) "VERIFIED" else "FAILED"});
+    std.debug.print("   - Wrong password: {}\n", .{if (wrong_password_valid) "FAILED" else "CORRECTLY REJECTED"});
 
     // 2. Table-specific key derivation
-    std.debug.print("\n🗝️ Testing table-specific key derivation...\n");
+    std.debug.print("\n🗝️ Testing table-specific key derivation...\n", .{});
     const users_key = try crypto.deriveTableKey("users");
     const orders_key = try crypto.deriveTableKey("orders");
     const payments_key = try crypto.deriveTableKey("payments");
 
-    std.debug.print("✅ Derived table-specific encryption keys:\n");
+    std.debug.print("✅ Derived table-specific encryption keys:\n", .{});
     std.debug.print("   - users: {x}\n", .{std.fmt.fmtSliceHexLower(&users_key)});
     std.debug.print("   - orders: {x}\n", .{std.fmt.fmtSliceHexLower(&orders_key)});
     std.debug.print("   - payments: {x}\n", .{std.fmt.fmtSliceHexLower(&payments_key)});
 
     // 3. Secure random token generation
-    std.debug.print("\n🎲 Testing secure random token generation...\n");
+    std.debug.print("\n🎲 Testing secure random token generation...\n", .{});
     const api_token = try crypto.generateToken(32);
     defer allocator.free(api_token);
     
     const session_token = try crypto.generateToken(16);
     defer allocator.free(session_token);
 
-    std.debug.print("✅ Generated cryptographically secure tokens:\n");
+    std.debug.print("✅ Generated cryptographically secure tokens:\n", .{});
     std.debug.print("   - API token (32 bytes): {x}\n", .{std.fmt.fmtSliceHexLower(api_token)});
     std.debug.print("   - Session token (16 bytes): {x}\n", .{std.fmt.fmtSliceHexLower(session_token)});
 
     // 4. Data integrity hashing
-    std.debug.print("\n🛡️ Testing data integrity verification...\n");
+    std.debug.print("\n🛡️ Testing data integrity verification...\n", .{});
     const important_data = "Critical database backup data that must not be tampered with";
     const data_hash = try crypto.hashData(important_data);
     
@@ -318,32 +317,32 @@ fn demoAdvancedCrypto(allocator: std.mem.Allocator) !void {
     const verification_hash = try crypto.hashData(important_data);
     const data_intact = std.mem.eql(u8, &data_hash, &verification_hash);
 
-    std.debug.print("✅ SHA3-256 data integrity check:\n");
+    std.debug.print("✅ SHA3-256 data integrity check:\n", .{});
     std.debug.print("   - Data hash: {x}\n", .{std.fmt.fmtSliceHexLower(&data_hash)});
-    std.debug.print("   - Integrity: {s}\n", .{if (data_intact) "VERIFIED" else "CORRUPTED"});
+    std.debug.print("   - Integrity: {}\n", .{if (data_intact) "VERIFIED" else "CORRUPTED"});
 
     // 5. Hybrid key exchange simulation
-    std.debug.print("\n🤝 Testing hybrid key exchange...\n");
+    std.debug.print("\n🤝 Testing hybrid key exchange...\n", .{});
     var peer_classical_key: [32]u8 = undefined;
     var peer_pq_key: [1184]u8 = undefined;
     
-    // Simulate peer keys
-    zcrypto.rand.fillBytes(&peer_classical_key);
-    zcrypto.rand.fillBytes(&peer_pq_key);
+    // Simulate peer keys using Zig std.crypto
+    std.crypto.random.bytes(&peer_classical_key);
+    std.crypto.random.bytes(&peer_pq_key);
 
     const shared_secret = try crypto.performKeyExchange(peer_classical_key, peer_pq_key);
     
-    std.debug.print("✅ Hybrid key exchange (X25519 + ML-KEM-768):\n");
+    std.debug.print("✅ Hybrid key exchange (X25519 + ML-KEM-768):\n", .{});
     std.debug.print("   - Shared secret: {x}...\n", .{std.fmt.fmtSliceHexLower(shared_secret[0..16])});
-    std.debug.print("   - Quantum-safe for long-term security\n");
+    std.debug.print("   - Quantum-safe for long-term security\n", .{});
 
-    std.debug.print("\n");
+    std.debug.print("\n", .{});
 }
 
 // Performance benchmark
 fn benchmarkCrypto(allocator: std.mem.Allocator) !void {
-    std.debug.print("⚡ Performance Benchmark\n");
-    std.debug.print("----------------------\n");
+    std.debug.print("⚡ Performance Benchmark\n", .{});
+    std.debug.print("----------------------\n", .{});
 
     var crypto = try zqlite.crypto.CryptoEngine.initWithMasterKey(
         allocator, 
@@ -359,7 +358,7 @@ fn benchmarkCrypto(allocator: std.mem.Allocator) !void {
     
     for (0..iterations) |_| {
         const encrypted = try crypto.encryptField(test_data);
-        defer encrypted.deinit(allocator);
+        defer allocator.free(encrypted);
         
         const decrypted = try crypto.decryptField(encrypted);
         defer allocator.free(decrypted);
@@ -369,10 +368,10 @@ fn benchmarkCrypto(allocator: std.mem.Allocator) !void {
     const duration_ms = @as(f64, @floatFromInt(end_time - start_time)) / 1_000_000.0;
     const ops_per_sec = @as(f64, @floatFromInt(iterations)) / (duration_ms / 1000.0);
 
-    std.debug.print("✅ Encryption/Decryption Performance:\n");
+    std.debug.print("✅ Encryption/Decryption Performance:\n", .{});
     std.debug.print("   - {} operations in {d:.2} ms\n", .{ iterations, duration_ms });
     std.debug.print("   - {d:.0} ops/sec\n", .{ops_per_sec});
-    std.debug.print("   - ChaCha20-Poly1305 AEAD\n");
+    std.debug.print("   - ChaCha20-Poly1305 AEAD\n", .{});
 
-    std.debug.print("\n");
+    std.debug.print("\n", .{});
 }

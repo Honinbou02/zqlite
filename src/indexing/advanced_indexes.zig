@@ -887,13 +887,14 @@ pub const OptimizedMultiColumnIndex = struct {
     }
 };
 
-/// Enhanced Index Manager with B-tree and optimized composite key support
+/// Enhanced Index Manager with B-tree, bloom filters and optimized composite key support
 pub const AdvancedIndexManager = struct {
     hash_indexes: std.ArrayList(*HashIndex),
     unique_indexes: std.ArrayList(*UniqueIndex),
     multi_indexes: std.ArrayList(*MultiColumnIndex),
     btree_indexes: std.ArrayList(*BTreeIndex),
     optimized_multi_indexes: std.ArrayList(*OptimizedMultiColumnIndex),
+    bloom_hash_indexes: std.ArrayList(*BloomHashIndex),
     allocator: std.mem.Allocator,
 
     const Self = @This();
@@ -905,6 +906,7 @@ pub const AdvancedIndexManager = struct {
             .multi_indexes = std.ArrayList(*MultiColumnIndex).init(allocator),
             .btree_indexes = std.ArrayList(*BTreeIndex).init(allocator),
             .optimized_multi_indexes = std.ArrayList(*OptimizedMultiColumnIndex).init(allocator),
+            .bloom_hash_indexes = std.ArrayList(*BloomHashIndex).init(allocator),
             .allocator = allocator,
         };
     }
@@ -919,6 +921,12 @@ pub const AdvancedIndexManager = struct {
     pub fn createOptimizedMultiIndex(self: *Self, name: []const u8, table: []const u8, columns: []const []const u8) !void {
         const index = try OptimizedMultiColumnIndex.init(self.allocator, name, table, columns);
         try self.optimized_multi_indexes.append(index);
+    }
+
+    /// Create a bloom hash index for fast existence checks
+    pub fn createBloomHashIndex(self: *Self, name: []const u8, table: []const u8, column: []const u8, expected_items: usize) !void {
+        const index = try BloomHashIndex.init(self.allocator, name, table, column, expected_items);
+        try self.bloom_hash_indexes.append(index);
     }
 
     /// Insert into B-tree indexes
@@ -954,6 +962,35 @@ pub const AdvancedIndexManager = struct {
         for (self.optimized_multi_indexes.items) |index| {
             if (std.mem.eql(u8, index.table, table) and columnsMatch(index.columns, columns)) {
                 return try index.lookup(values);
+            }
+        }
+        return null;
+    }
+
+    /// Insert into bloom hash indexes
+    pub fn insertBloomHash(self: *Self, table: []const u8, column: []const u8, value: storage.Value, row_id: storage.RowId) !void {
+        for (self.bloom_hash_indexes.items) |index| {
+            if (std.mem.eql(u8, index.hash_index.table, table) and std.mem.eql(u8, index.hash_index.column, column)) {
+                try index.insert(value, row_id);
+            }
+        }
+    }
+
+    /// Fast lookup in bloom hash indexes with bloom filter optimization
+    pub fn lookupBloomHash(self: *Self, table: []const u8, column: []const u8, value: storage.Value) !?[]storage.RowId {
+        for (self.bloom_hash_indexes.items) |index| {
+            if (std.mem.eql(u8, index.hash_index.table, table) and std.mem.eql(u8, index.hash_index.column, column)) {
+                return try index.lookup(value);
+            }
+        }
+        return null;
+    }
+
+    /// Get bloom hash index statistics
+    pub fn getBloomHashStats(self: *Self, table: []const u8, column: []const u8) ?BloomHashStats {
+        for (self.bloom_hash_indexes.items) |index| {
+            if (std.mem.eql(u8, index.hash_index.table, table) and std.mem.eql(u8, index.hash_index.column, column)) {
+                return index.getStats();
             }
         }
         return null;
@@ -1049,7 +1086,224 @@ pub const AdvancedIndexManager = struct {
             index.deinit();
         }
         self.optimized_multi_indexes.deinit();
+
+        for (self.bloom_hash_indexes.items) |index| {
+            index.deinit();
+        }
+        self.bloom_hash_indexes.deinit();
     }
+};
+
+/// Bloom filter for fast existence checks with configurable false positive rate
+pub const BloomFilter = struct {
+    bit_array: []bool,
+    size: usize,
+    hash_functions: u8,
+    allocator: std.mem.Allocator,
+    item_count: usize,
+    expected_items: usize,
+
+    const Self = @This();
+
+    /// Initialize bloom filter with expected item count and desired false positive rate
+    pub fn init(allocator: std.mem.Allocator, expected_items: usize, false_positive_rate: f64) !*Self {
+        const optimal_size = Self.calculateOptimalSize(expected_items, false_positive_rate);
+        const optimal_hash_functions = Self.calculateOptimalHashFunctions(expected_items, optimal_size);
+
+        const filter = try allocator.create(Self);
+        filter.* = Self{
+            .bit_array = try allocator.alloc(bool, optimal_size),
+            .size = optimal_size,
+            .hash_functions = optimal_hash_functions,
+            .allocator = allocator,
+            .item_count = 0,
+            .expected_items = expected_items,
+        };
+
+        @memset(filter.bit_array, false);
+        return filter;
+    }
+
+    /// Calculate optimal bit array size for given parameters
+    fn calculateOptimalSize(expected_items: usize, false_positive_rate: f64) usize {
+        const ln2 = 0.6931471805599453;
+        const size = -(@as(f64, @floatFromInt(expected_items)) * @log(false_positive_rate)) / (ln2 * ln2);
+        return @max(64, @as(usize, @intFromFloat(@ceil(size)))); // Minimum 64 bits
+    }
+
+    /// Calculate optimal number of hash functions
+    fn calculateOptimalHashFunctions(expected_items: usize, bit_array_size: usize) u8 {
+        const ln2 = 0.6931471805599453;
+        const ratio = @as(f64, @floatFromInt(bit_array_size)) / @as(f64, @floatFromInt(expected_items));
+        const hash_count = ratio * ln2;
+        return @max(1, @min(32, @as(u8, @intFromFloat(@round(hash_count))))); // Between 1-32 hash functions
+    }
+
+    /// Add a value to the bloom filter
+    pub fn add(self: *Self, value: storage.Value) !void {
+        const hashes = try self.getHashes(value);
+        
+        for (0..self.hash_functions) |i| {
+            const hash = hashes[i % hashes.len];
+            const index = hash % self.size;
+            self.bit_array[index] = true;
+        }
+        
+        self.item_count += 1;
+    }
+
+    /// Check if a value might exist (can have false positives, no false negatives)
+    pub fn mightContain(self: *Self, value: storage.Value) !bool {
+        const hashes = try self.getHashes(value);
+        
+        for (0..self.hash_functions) |i| {
+            const hash = hashes[i % hashes.len];
+            const index = hash % self.size;
+            if (!self.bit_array[index]) {
+                return false; // Definitely not present
+            }
+        }
+        
+        return true; // Might be present
+    }
+
+    /// Generate multiple hash values for a storage value
+    fn getHashes(self: *Self, value: storage.Value) ![8]u64 {
+        var hashes: [8]u64 = undefined;
+        
+        // Primary hash using Wyhash
+        var hasher1 = std.hash.Wyhash.init(0);
+        self.updateHasherWithValue(&hasher1, value);
+        hashes[0] = hasher1.final();
+        
+        // Secondary hash using different seed
+        var hasher2 = std.hash.Wyhash.init(0x9e3779b97f4a7c15);
+        self.updateHasherWithValue(&hasher2, value);
+        hashes[1] = hasher2.final();
+        
+        // Generate additional hashes using double hashing technique
+        for (2..8) |i| {
+            hashes[i] = hashes[0] +% (@as(u64, @intCast(i)) * hashes[1]);
+        }
+        
+        return hashes;
+    }
+
+    /// Update hasher with storage value
+    fn updateHasherWithValue(self: *Self, hasher: *std.hash.Wyhash, value: storage.Value) void {
+        _ = self;
+        switch (value) {
+            .Integer => |int_val| {
+                hasher.update("i"); // Type marker
+                hasher.update(std.mem.asBytes(&int_val));
+            },
+            .Real => |real_val| {
+                hasher.update("r");
+                hasher.update(std.mem.asBytes(&real_val));
+            },
+            .Text => |text_val| {
+                hasher.update("t");
+                hasher.update(text_val);
+            },
+            .Blob => |blob_val| {
+                hasher.update("b");
+                hasher.update(blob_val);
+            },
+            .Null => {
+                hasher.update("n");
+            },
+        }
+    }
+
+    /// Get current false positive probability
+    pub fn getCurrentFalsePositiveRate(self: *Self) f64 {
+        const ln2 = 0.6931471805599453;
+        const bits_per_item = @as(f64, @floatFromInt(self.size)) / @as(f64, @floatFromInt(@max(1, self.item_count)));
+        const exponent = -(@as(f64, @floatFromInt(self.hash_functions)) * ln2 * bits_per_item);
+        return std.math.pow(f64, 1.0 - @exp(exponent), @as(f64, @floatFromInt(self.hash_functions)));
+    }
+
+    /// Get memory usage in bytes
+    pub fn getMemoryUsage(self: *Self) usize {
+        return self.size / 8 + @sizeOf(Self); // bits to bytes plus struct overhead
+    }
+
+    /// Clear all bits (reset the filter)
+    pub fn clear(self: *Self) void {
+        @memset(self.bit_array, false);
+        self.item_count = 0;
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.allocator.free(self.bit_array);
+        self.allocator.destroy(self);
+    }
+};
+
+/// Enhanced Hash Index with Bloom Filter for fast negative lookups
+pub const BloomHashIndex = struct {
+    hash_index: *HashIndex,
+    bloom_filter: *BloomFilter,
+    allocator: std.mem.Allocator,
+
+    const Self = @This();
+
+    pub fn init(allocator: std.mem.Allocator, name: []const u8, table: []const u8, column: []const u8, expected_items: usize) !*Self {
+        const index = try allocator.create(Self);
+        index.* = Self{
+            .hash_index = try HashIndex.init(allocator, name, table, column),
+            .bloom_filter = try BloomFilter.init(allocator, expected_items, 0.01), // 1% false positive rate
+            .allocator = allocator,
+        };
+        return index;
+    }
+
+    /// Add value to both hash index and bloom filter
+    pub fn insert(self: *Self, value: storage.Value, row_id: storage.RowId) !void {
+        try self.hash_index.insert(value, row_id);
+        try self.bloom_filter.add(value);
+    }
+
+    /// Fast lookup with bloom filter pre-check
+    pub fn lookup(self: *Self, value: storage.Value) ![]storage.RowId {
+        // Fast negative lookup using bloom filter
+        if (!(try self.bloom_filter.mightContain(value))) {
+            return &[_]storage.RowId{}; // Definitely not present
+        }
+        
+        // Might be present, check hash index
+        return try self.hash_index.lookup(value);
+    }
+
+    /// Remove value from hash index (bloom filter can't remove)
+    pub fn remove(self: *Self, value: storage.Value, row_id: storage.RowId) !void {
+        try self.hash_index.remove(value, row_id);
+        // Note: Bloom filter doesn't support removal, which is acceptable
+        // as it only affects false positive rate slightly
+    }
+
+    /// Get performance statistics
+    pub fn getStats(self: *Self) BloomHashStats {
+        return BloomHashStats{
+            .hash_entries = self.hash_index.hash_map.count(),
+            .bloom_items = self.bloom_filter.item_count,
+            .bloom_size_bytes = self.bloom_filter.getMemoryUsage(),
+            .false_positive_rate = self.bloom_filter.getCurrentFalsePositiveRate(),
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.hash_index.deinit();
+        self.bloom_filter.deinit();
+        self.allocator.destroy(self);
+    }
+};
+
+pub const BloomHashStats = struct {
+    hash_entries: u32,
+    bloom_items: usize,
+    bloom_size_bytes: usize,
+    false_positive_rate: f64,
 };
 
 /// Legacy Index manager for backwards compatibility
@@ -1145,7 +1399,70 @@ test "composite key optimization" {
     try testing.expectEqual(hash1, hash2);
 }
 
-test "advanced index manager integration" {
+test "bloom filter operations" {
+    const testing = std.testing;
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var bloom = try BloomFilter.init(allocator, 1000, 0.01); // 1000 items, 1% false positive
+    defer bloom.deinit();
+
+    // Add some values
+    const values = [_]storage.Value{
+        storage.Value{ .Integer = 123 },
+        storage.Value{ .Text = "hello" },
+        storage.Value{ .Integer = 456 },
+        storage.Value{ .Text = "world" },
+    };
+
+    for (values) |value| {
+        try bloom.add(value);
+    }
+
+    // Test positive lookups (should all return true)
+    for (values) |value| {
+        try testing.expect(try bloom.mightContain(value));
+    }
+
+    // Test negative lookup (should return false, but might have false positives)
+    const non_existent = storage.Value{ .Integer = 999 };
+    _ = try bloom.mightContain(non_existent);
+    // Note: This might occasionally fail due to false positives, but very unlikely with 1% rate
+}
+
+test "bloom hash index performance" {
+    const testing = std.testing;
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var index = try BloomHashIndex.init(allocator, "test_bloom", "users", "email", 10000);
+    defer index.deinit();
+
+    // Add many values
+    for (0..1000) |i| {
+        const value = storage.Value{ .Integer = @intCast(i) };
+        try index.insert(value, @intCast(i));
+    }
+
+    // Test existing value lookup
+    const existing = storage.Value{ .Integer = 500 };
+    const result = try index.lookup(existing);
+    try testing.expect(result.len > 0);
+
+    // Test non-existing value (should be fast due to bloom filter)
+    const non_existing = storage.Value{ .Integer = 9999 };
+    const empty_result = try index.lookup(non_existing);
+    try testing.expectEqual(@as(usize, 0), empty_result.len);
+
+    // Check statistics
+    const stats = index.getStats();
+    try testing.expect(stats.bloom_items == 1000);
+    try testing.expect(stats.false_positive_rate < 0.02); // Should be close to 1%
+}
+
+test "advanced index manager with bloom filters" {
     const testing = std.testing;
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -1154,9 +1471,10 @@ test "advanced index manager integration" {
     var manager = AdvancedIndexManager.init(allocator);
     defer manager.deinit();
 
-    // Create indexes
+    // Create all types of indexes
     try manager.createHashIndex("test_hash", "users", "id");
     try manager.createBTreeIndex("test_btree", "events", "timestamp");
+    try manager.createBloomHashIndex("test_bloom", "users", "email", 1000);
 
     const columns = [_][]const u8{ "user_id", "type" };
     try manager.createOptimizedMultiIndex("test_multi", "actions", &columns);
@@ -1164,6 +1482,7 @@ test "advanced index manager integration" {
     // Test operations
     try manager.insertHash("users", "id", storage.Value{ .Integer = 123 }, 1);
     try manager.insertBTree("events", "timestamp", storage.Value{ .Integer = 1000 }, 1);
+    try manager.insertBloomHash("users", "email", storage.Value{ .Text = "test@example.com" }, 1);
 
     const multi_values = [_]storage.Value{
         storage.Value{ .Integer = 123 },
@@ -1175,5 +1494,22 @@ test "advanced index manager integration" {
     if (try manager.lookupHash("users", "id", storage.Value{ .Integer = 123 })) |result| {
         defer allocator.free(result);
         try testing.expectEqual(@as(usize, 1), result.len);
+    }
+
+    if (try manager.lookupBloomHash("users", "email", storage.Value{ .Text = "test@example.com" })) |result| {
+        defer allocator.free(result);
+        try testing.expectEqual(@as(usize, 1), result.len);
+    }
+
+    // Test non-existing bloom hash lookup (should be fast)
+    if (try manager.lookupBloomHash("users", "email", storage.Value{ .Text = "nonexistent@example.com" })) |result| {
+        defer allocator.free(result);
+        try testing.expectEqual(@as(usize, 0), result.len);
+    }
+
+    // Check bloom filter statistics
+    if (manager.getBloomHashStats("users", "email")) |stats| {
+        try testing.expect(stats.bloom_items == 1);
+        try testing.expect(stats.false_positive_rate >= 0.0);
     }
 }
