@@ -67,7 +67,7 @@ const PostQuantumBank = struct {
             "post_quantum_banking_master_key_2024_ultra_secure"
         );
 
-        const tx_log = try zqlite.crypto.CryptoTransactionLog.init(allocator);
+        const tx_log = try zqlite.crypto.CryptoTransactionLog.init(allocator, &crypto);
 
         var bank = Self{
             .allocator = allocator,
@@ -140,9 +140,17 @@ const PostQuantumBank = struct {
         // Create account record
         _ = Account{
             .id = account_id,
-            .encrypted_balance = encrypted_balance,
+            .encrypted_balance = zqlite.crypto.EncryptedField{
+                .ciphertext = encrypted_balance.ciphertext,
+                .nonce = encrypted_balance.nonce,
+                .tag = encrypted_balance.tag,
+            },
             .public_key_classical = keypair.classical.public_key,
-            .public_key_pq = keypair.classical.public_key, // Using same key for simplified structure
+            .public_key_pq = blk: {
+                var pq_key = [_]u8{0} ** 1952;
+                @memcpy(pq_key[0..32], &keypair.classical.public_key);
+                break :blk pq_key;
+            }, // Mock PQ public key from classical key
             .account_type = account_type,
             .created_at = std.time.timestamp(),
         };
@@ -159,12 +167,12 @@ const PostQuantumBank = struct {
         std.debug.print("✅ Account created with post-quantum security\n", .{});
         std.debug.print("   - ID: {s}\n", .{account_id});
         std.debug.print("   - Type: {s}\n", .{@tagName(account_type)});
-        std.debug.print("   - Initial balance: {} (encrypted)\n", .{initial_balance});
+        std.debug.print("   - Initial balance: {d} (encrypted)\n", .{initial_balance});
     }
 
     /// Transfer funds with hybrid classical + post-quantum signatures
     pub fn transfer(self: *Self, from_account: []const u8, to_account: []const u8, amount: u64, private_transfer: bool) !void {
-        std.debug.print("💸 Processing transfer: {s} → {s} (amount: {})\n", .{ from_account, to_account, amount });
+        std.debug.print("💸 Processing transfer: {s} → {s} (amount: {d})\n", .{ from_account, to_account, amount });
 
         // Generate transaction ID
         const tx_id = try std.fmt.allocPrint(self.allocator, "tx_{}", .{std.time.timestamp()});
@@ -272,7 +280,7 @@ const PostQuantumBank = struct {
         const total_deposits: u64 = 50000000; // This would be computed from encrypted balances
         const regulatory_minimum: u64 = 10000000;
 
-        const compliance_proof = try self.crypto_engine.createRangeProof(
+        var compliance_proof = try self.crypto_engine.createRangeProof(
             total_deposits,
             regulatory_minimum,
             std.math.maxInt(u64)

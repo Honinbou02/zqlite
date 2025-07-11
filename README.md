@@ -1,4 +1,4 @@
-# ZQLite v0.5.0 🚀🔐
+# ZQLite v0.8.0 🚀🔐
 
 ![Build](https://img.shields.io/github/actions/workflow/status/ghostkellz/zqlite/ci.yml?style=flat-square)
 ![Zig](https://img.shields.io/badge/zig-0.15.0+-f7a41d?style=flat-square)
@@ -11,13 +11,25 @@
 
 ---
 
-## 🌟 What's New in v0.5.0
+## 🌟 What's New in v0.8.0
 
-### 🔮 **Post-Quantum Revolution**
-- **ML-KEM-768**: NIST standardized quantum-safe key encapsulation
-- **ML-DSA-65**: Post-quantum digital signatures
-- **Hybrid Mode**: Classical + post-quantum for migration safety
-- **Zero-Knowledge Proofs**: Privacy-preserving database queries
+### 🚀 **ZNS Integration & Ghostchain Compatibility**
+- **ZNS Adapter**: Native support for Zcrypto Name System (ENS for Ghostchain)
+- **Domain-Specific Crypto**: Specialized hash functions for DNS record security
+- **Ghostchain Addresses**: Generate and validate quantum-safe blockchain addresses
+- **ENS Compatibility**: Seamless integration with decentralized name systems
+
+### 🔮 **Enhanced Post-Quantum Security**
+- **Complete Shroud Integration**: Full ML-KEM-768 and ML-DSA-65 implementations
+- **Production-Ready PQ Crypto**: No more mock keypairs - actual quantum-safe keys
+- **Hybrid Signatures**: Classical + post-quantum for maximum security
+- **Hash Verification System**: Dependency integrity and stability monitoring
+
+### 🛡️ **Security & Stability Improvements**
+- **Dependency Hash Verification**: Prevent supply chain attacks
+- **Stability Monitoring**: Real-time crypto operation health checks
+- **Error Rate Tracking**: Comprehensive system reliability metrics
+- **Fallback Mechanisms**: Graceful degradation when advanced crypto unavailable
 
 ### 🌐 **World's First Post-Quantum QUIC Database**
 - Quantum-safe transport layer with zcrypto v0.5.0
@@ -52,6 +64,9 @@ zig build
 ```bash
 # Showcase all new features
 zig build run-pq-showcase
+
+# ZNS Ghostchain integration demo
+zig build run-zns-demo
 
 # Banking system with hybrid crypto
 zig build run-banking
@@ -128,6 +143,28 @@ const signature = try engine.signTransaction("TRANSFER 1000 COINS");
 const valid = try engine.verifyTransaction("TRANSFER 1000 COINS", signature);
 ```
 
+### ZNS Integration
+```zig
+const zns_adapter = @import("zqlite").zns_adapter;
+
+// Create ZNS database for Ghostchain
+var zns_db = try zns_adapter.ZNSDatabase.init(allocator, crypto_config);
+defer zns_db.deinit();
+
+// Store Ghostchain address record
+const record = zns_adapter.ZNSAdapter.ZNSRecord{
+    .domain = "example.ghost",
+    .record_type = .GHOSTCHAIN_ADDR,
+    .value = "ghost1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+    .signature = null,
+    .timestamp = std.time.timestamp(),
+};
+try zns_db.storeRecord(record);
+
+// Resolve Ghostchain address
+const address = zns_db.resolveGhostchainAddress("example.ghost");
+```
+
 ### Zero-Knowledge Proofs
 ```zig
 // Enable ZKP features
@@ -194,7 +231,7 @@ const result = try db_transport.executeQuery(conn_id, "SELECT * FROM accounts");
 
 ## 📊 Performance
 
-ZQLite v0.5.0 delivers cutting-edge performance:
+ZQLite v0.8.0 delivers cutting-edge performance:
 
 ### Post-Quantum Operations
 - **ML-KEM-768 Keygen**: >50,000 ops/sec

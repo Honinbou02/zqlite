@@ -25,6 +25,13 @@ pub const cli = @import("shell/cli.zig");
 pub const crypto = struct {
     pub const CryptoEngine = @import("crypto/secure_storage.zig").CryptoEngine;
     pub const CryptoTransactionLog = @import("crypto/secure_storage.zig").CryptoTransactionLog;
+    pub const CryptoInterface = @import("crypto/interface.zig").CryptoInterface;
+    pub const CryptoConfig = @import("crypto/interface.zig").CryptoConfig;
+    pub const CryptoBackend = @import("crypto/interface.zig").CryptoBackend;
+    pub const HashVerifier = @import("crypto/hash_verification.zig").HashVerifier;
+    pub const StabilityMonitor = @import("crypto/hash_verification.zig").StabilityMonitor;
+    pub const ZKProof = @import("crypto/secure_storage.zig").ZKProof;
+    pub const HybridSignature = @import("crypto/secure_storage.zig").HybridSignature;
     pub const EncryptedField = struct {
         ciphertext: []u8,
         nonce: [12]u8,
@@ -47,8 +54,11 @@ pub const transport = struct {
 // Advanced indexing
 pub const advanced_indexes = @import("indexing/advanced_indexes.zig");
 
+// ZNS Integration (NEW in v0.8.0)
+pub const zns_adapter = @import("crypto/zns_adapter.zig");
+
 // Version and metadata
-pub const version = "0.3.0";
+pub const version = "0.8.0";
 pub const build_info = "zqlite " ++ version ++ " - Next-generation cryptographic database";
 
 // Main API functions

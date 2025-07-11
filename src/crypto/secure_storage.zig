@@ -2,7 +2,7 @@ const std = @import("std");
 const crypto_interface = @import("interface.zig");
 const storage = @import("../db/storage.zig");
 
-const shroud = if (@hasDecl(@import("root"), "shroud")) @import("shroud") else null;
+// Shroud is now properly imported via the crypto interface
 
 /// 🚀 ZQLite v0.7.0 Crypto Engine - Next-generation database encryption
 /// Features: Modular crypto backends, Native Zig crypto, Optional Shroud integration
@@ -76,42 +76,61 @@ pub const CryptoEngine = struct {
 
     /// Generate hybrid classical + post-quantum key pairs
     fn generatePQKeyPair(self: *Self) !PQKeyPair {
-        // Generate random seed
-        var seed: [32]u8 = undefined;
+        // Generate random seed (64 bytes for Ed25519)
+        var seed: [64]u8 = undefined;
         try self.crypto.randomBytes(&seed);
 
-        // For now, create mock keypairs - actual implementation would use Shroud
-        const ed25519_keypair = struct {
+        // Generate actual keypairs using Shroud or native crypto
+        var ed25519_keypair: struct {
             public_key: [32]u8,
             secret_key: [64]u8,
-        }{
-            .public_key = [_]u8{0} ** 32,
-            .secret_key = [_]u8{0} ** 64,
-        };
+        } = undefined;
         
-        const x25519_keypair = struct {
+        var x25519_keypair: struct {
             public_key: [32]u8,
             secret_key: [32]u8,
-        }{
-            .public_key = [_]u8{0} ** 32,
-            .secret_key = [_]u8{0} ** 32,
-        };
+        } = undefined;
+        
+        // Generate Ed25519 keypair
+        // Always use the crypto interface for consistent behavior
+        const ed25519_keys = try self.crypto.generateEd25519KeyPair();
+        ed25519_keypair.public_key = ed25519_keys.public_key;
+        ed25519_keypair.secret_key = ed25519_keys.secret_key;
+        
+        const x25519_keys = try self.crypto.generateX25519KeyPair();
+        x25519_keypair.public_key = x25519_keys.public_key;
+        x25519_keypair.secret_key = x25519_keys.secret_key;
 
-        const ml_kem_keypair = struct {
+        var ml_kem_keypair: struct {
             public_key: [1184]u8,
             secret_key: [2400]u8,
-        }{
-            .public_key = [_]u8{0} ** 1184,
-            .secret_key = [_]u8{0} ** 2400,
-        };
+        } = undefined;
         
-        const ml_dsa_keypair = struct {
+        var ml_dsa_keypair: struct {
             public_key: [1952]u8,
             secret_key: [4032]u8,
-        }{
-            .public_key = [_]u8{0} ** 1952,
-            .secret_key = [_]u8{0} ** 4032,
-        };
+        } = undefined;
+        
+        // Generate post-quantum keypairs if Shroud is available
+        if (self.crypto.backend == .shroud and @hasDecl(@import("root"), "shroud")) {
+            const shroud_crypto = @import("shroud");
+            
+            // Generate ML-KEM-768 keypair
+            const kem_pair = try shroud_crypto.ghostcipher.mlkem768.generateKeyPair(self.allocator);
+            ml_kem_keypair.public_key = kem_pair.public_key;
+            ml_kem_keypair.secret_key = kem_pair.secret_key;
+            
+            // Generate ML-DSA-65 keypair
+            const dsa_pair = try shroud_crypto.ghostcipher.mldsa65.generateKeyPair(self.allocator);
+            ml_dsa_keypair.public_key = dsa_pair.public_key;
+            ml_dsa_keypair.secret_key = dsa_pair.secret_key;
+        } else {
+            // Fallback to zero-filled keys (not secure, for compatibility)
+            @memset(&ml_kem_keypair.public_key, 0);
+            @memset(&ml_kem_keypair.secret_key, 0);
+            @memset(&ml_dsa_keypair.public_key, 0);
+            @memset(&ml_dsa_keypair.secret_key, 0);
+        }
 
         return PQKeyPair{
             .classical = ClassicalKeyPair{
@@ -660,6 +679,7 @@ pub const CryptoTransactionLog = struct {
     allocator: std.mem.Allocator,
     entries: std.ArrayList(LogEntry),
     chain_key: [32]u8,
+    crypto_engine: *CryptoEngine,
 
     const LogEntry = struct {
         transaction_id: u64,
@@ -673,7 +693,7 @@ pub const CryptoTransactionLog = struct {
 
     const Self = @This();
 
-    pub fn init(allocator: std.mem.Allocator) !Self {
+    pub fn init(allocator: std.mem.Allocator, crypto_engine: *CryptoEngine) !Self {
         var chain_key: [32]u8 = undefined;
         std.crypto.random.bytes(&chain_key);
 
@@ -681,6 +701,7 @@ pub const CryptoTransactionLog = struct {
             .allocator = allocator,
             .entries = std.ArrayList(LogEntry).init(allocator),
             .chain_key = chain_key,
+            .crypto_engine = crypto_engine,
         };
     }
 

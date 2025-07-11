@@ -102,8 +102,8 @@ const NextGenDatabase = struct {
 
     /// Store VPN connection with encrypted certificate
     pub fn storeVPNConnection(self: *Self, client_id: []const u8, certificate: []const u8, ip_address: []const u8) !void {
-        const encrypted_cert = try self.crypto.encryptField(certificate);
-        defer self.allocator.free(encrypted_cert);
+        var encrypted_cert = try self.crypto.encryptField(certificate);
+        defer encrypted_cert.deinit(self.allocator);
 
         var buf: [512]u8 = undefined;
         const sql = try std.fmt.bufPrint(buf[0..], "INSERT INTO vpn_connections (client_id, encrypted_cert, connection_time, ip_address, data_transferred) VALUES ('{s}', 'encrypted', {}, '{s}', 0)", .{ client_id, std.time.timestamp(), ip_address });
@@ -114,8 +114,8 @@ const NextGenDatabase = struct {
 
     /// Store crypto wallet with encrypted private key
     pub fn storeCryptoWallet(self: *Self, address: []const u8, private_key: []const u8, balance: u64) !void {
-        const encrypted_key = try self.crypto.encryptField(private_key);
-        defer self.allocator.free(encrypted_key);
+        var encrypted_key = try self.crypto.encryptField(private_key);
+        defer encrypted_key.deinit(self.allocator);
 
         var buf: [512]u8 = undefined;
         const sql = try std.fmt.bufPrint(buf[0..], "INSERT INTO crypto_wallets (address, encrypted_private_key, balance, created_at) VALUES ('{s}', 'encrypted', {}, {})", .{ address, balance, std.time.timestamp() });

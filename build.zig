@@ -175,6 +175,7 @@ pub fn build(b: *std.Build) void {
     advanced_indexing_demo.root_module.addImport("zqlite", lib.root_module);
     if (shroud_dep) |dep| {
         advanced_indexing_demo.root_module.addImport("shroud", dep.module("shroud"));
+        advanced_indexing_demo.root_module.addImport("ghostcipher", dep.module("ghostcipher"));
     }
     advanced_indexing_demo.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
     b.installArtifact(advanced_indexing_demo);
@@ -206,6 +207,25 @@ pub fn build(b: *std.Build) void {
     run_pq_showcase.step.dependOn(b.getInstallStep());
     const run_pq_showcase_step = b.step("run-pq-showcase", "Run the post-quantum showcase demo");
     run_pq_showcase_step.dependOn(&run_pq_showcase.step);
+
+    // ZNS Ghostchain Demo (NEW in v0.8.0)
+    const zns_demo_example = b.addExecutable(.{
+        .name = "zns_ghostchain_demo",
+        .root_source_file = b.path("examples/zns_ghostchain_demo.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    zns_demo_example.root_module.addImport("zqlite", lib.root_module);
+    if (shroud_dep) |dep| {
+        zns_demo_example.root_module.addImport("shroud", dep.module("shroud"));
+    }
+    zns_demo_example.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
+    b.installArtifact(zns_demo_example);
+
+    const run_zns_demo = b.addRunArtifact(zns_demo_example);
+    run_zns_demo.step.dependOn(b.getInstallStep());
+    const run_zns_demo_step = b.step("run-zns-demo", "Run the ZNS Ghostchain integration demo");
+    run_zns_demo_step.dependOn(&run_zns_demo.step);
 
     // Hybrid Crypto Banking Example (NEW in v0.5.0)
     const banking_example = b.addExecutable(.{

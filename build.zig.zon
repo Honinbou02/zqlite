@@ -1,6 +1,6 @@
 .{
     .name = .zqlite,
-    .version = "0.7.0",
+    .version = "0.8.0",
     .fingerprint = 0x9fb4d74ae26e27d0,
 
     .dependencies = .{
@@ -12,7 +12,7 @@
         // Shroud crypto - optional dependency for advanced features
         .shroud = .{
             .url = "https://github.com/ghostkellz/shroud/archive/main.tar.gz",
-            .hash = "122070b3c10a2bd82405cf1bef779789685bce2cb71dd95bfbc540b92d23f57bfd7b",
+            .hash = "shroud-0.4.0-z7C8meSFOAVHhmfnRjKbbavwmd55NEfaOisYuoMKeYWL",
         },
     },
 
