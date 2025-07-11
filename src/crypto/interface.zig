@@ -255,7 +255,7 @@ pub const CryptoInterface = struct {
 pub fn detectAvailableFeatures() CryptoConfig {
     var config = CryptoConfig{};
     
-    // Check if Shroud is available at compile time
+    // Shroud is required for v0.8.0 - full post-quantum crypto support
     config.backend = .shroud;
     config.enable_pq = true;
     config.enable_zkp = true;

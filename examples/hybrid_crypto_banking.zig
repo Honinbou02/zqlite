@@ -156,10 +156,12 @@ const PostQuantumBank = struct {
         };
 
         // Insert into database (simplified - in production would use prepared statements)
-        try self.db.execute("INSERT INTO accounts (id, account_type, created_at) VALUES ('{}', {}, {});");
+        const insert_sql = try std.fmt.allocPrint(self.allocator, "INSERT INTO accounts (id, account_type, created_at) VALUES ('{s}', {d}, {d});", .{account_id, @intFromEnum(account_type), std.time.timestamp()});
+        defer self.allocator.free(insert_sql);
+        try self.db.execute(insert_sql);
 
         // Log creation in cryptographic audit trail
-        const audit_data = try std.fmt.allocPrint(self.allocator, "CREATE_ACCOUNT:{s}:{}", .{ account_id, initial_balance });
+        const audit_data = try std.fmt.allocPrint(self.allocator, "CREATE_ACCOUNT:{s}:{d}", .{ account_id, initial_balance });
         defer self.allocator.free(audit_data);
         
         try self.transaction_log.logOperation("accounts", "CREATE", audit_data);
@@ -175,13 +177,13 @@ const PostQuantumBank = struct {
         std.debug.print("💸 Processing transfer: {s} → {s} (amount: {d})\n", .{ from_account, to_account, amount });
 
         // Generate transaction ID
-        const tx_id = try std.fmt.allocPrint(self.allocator, "tx_{}", .{std.time.timestamp()});
+        const tx_id = try std.fmt.allocPrint(self.allocator, "tx_{d}", .{std.time.timestamp()});
         defer self.allocator.free(tx_id);
 
         // Create transaction data for signing
         const tx_data = try std.fmt.allocPrint(
             self.allocator,
-            "TRANSFER:{}:{}:{}:{}",
+            "TRANSFER:{s}:{s}:{d}:{d}",
             .{ from_account, to_account, amount, std.time.timestamp() }
         );
         defer self.allocator.free(tx_data);
@@ -254,7 +256,7 @@ const PostQuantumBank = struct {
         }
     }
 
-    fn processTransfer(self: *Self, _: Transaction) !void {
+    fn processTransfer(self: *Self, transaction: Transaction) !void {
         // In a real implementation, this would:
         // 1. Decrypt account balances
         // 2. Verify sufficient funds
@@ -263,7 +265,9 @@ const PostQuantumBank = struct {
         // 5. Store transaction
 
         // For demo, just insert transaction record
-        try self.db.execute("INSERT INTO transactions (id, from_account, to_account, timestamp, tx_type) VALUES ('{}', '{}', '{}', {}, {});");
+        const insert_sql = try std.fmt.allocPrint(self.allocator, "INSERT INTO transactions (id, from_account, to_account, timestamp, tx_type) VALUES ('{s}', '{s}', '{s}', {d}, {d});", .{transaction.id, transaction.from_account, transaction.to_account, transaction.timestamp, @intFromEnum(transaction.tx_type)});
+        defer self.allocator.free(insert_sql);
+        try self.db.execute(insert_sql);
         
         std.debug.print("   - Updated account balances (encrypted)\n", .{});
         std.debug.print("   - Transaction recorded\n", .{});

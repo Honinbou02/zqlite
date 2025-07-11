@@ -5,14 +5,11 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     
-    // Feature flags
-    const enable_shroud = b.option(bool, "enable_shroud", "Enable Shroud crypto backend (advanced features)") orelse false;
-
-    // Get dependencies
-    const shroud_dep = if (enable_shroud) b.dependency("shroud", .{
+    // Get dependencies - Shroud is required for v0.8.0
+    const shroud_dep = b.dependency("shroud", .{
         .target = target,
         .optimize = optimize,
-    }) else null;
+    });
 
     const tokioz_dep = b.dependency("tokioz", .{
         .target = target,
@@ -28,9 +25,7 @@ pub fn build(b: *std.Build) void {
     });
 
     // Add dependency modules
-    if (shroud_dep) |dep| {
-        lib.root_module.addImport("shroud", dep.module("shroud"));
-    }
+    lib.root_module.addImport("shroud", shroud_dep.module("shroud"));
     lib.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
 
     // Install the library
@@ -42,9 +37,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    if (shroud_dep) |dep| {
-        zqlite_module.addImport("shroud", dep.module("shroud"));
-    }
+    zqlite_module.addImport("shroud", shroud_dep.module("shroud"));
     zqlite_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
 
     // Create the zqlite executable
@@ -57,9 +50,7 @@ pub fn build(b: *std.Build) void {
 
     // Link the library to the executable
     exe.root_module.addImport("zqlite", lib.root_module);
-    if (shroud_dep) |dep| {
-        exe.root_module.addImport("shroud", dep.module("shroud"));
-    }
+    exe.root_module.addImport("shroud", shroud_dep.module("shroud"));
     exe.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
 
     // Install the executable
@@ -150,9 +141,7 @@ pub fn build(b: *std.Build) void {
 
     // Link all modules to the Next-Gen example
     nextgen_example.root_module.addImport("zqlite", lib.root_module);
-    if (shroud_dep) |dep| {
-        nextgen_example.root_module.addImport("shroud", dep.module("shroud"));
-    }
+    nextgen_example.root_module.addImport("shroud", shroud_dep.module("shroud"));
     nextgen_example.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
 
     // Install the Next-Gen example
@@ -173,10 +162,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     advanced_indexing_demo.root_module.addImport("zqlite", lib.root_module);
-    if (shroud_dep) |dep| {
-        advanced_indexing_demo.root_module.addImport("shroud", dep.module("shroud"));
-        advanced_indexing_demo.root_module.addImport("ghostcipher", dep.module("ghostcipher"));
-    }
+    advanced_indexing_demo.root_module.addImport("shroud", shroud_dep.module("shroud"));
+    advanced_indexing_demo.root_module.addImport("ghostcipher", shroud_dep.module("ghostcipher"));
     advanced_indexing_demo.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
     b.installArtifact(advanced_indexing_demo);
 
@@ -197,9 +184,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     pq_showcase_example.root_module.addImport("zqlite", lib.root_module);
-    if (shroud_dep) |dep| {
-        pq_showcase_example.root_module.addImport("shroud", dep.module("shroud"));
-    }
+    pq_showcase_example.root_module.addImport("shroud", shroud_dep.module("shroud"));
     pq_showcase_example.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
     b.installArtifact(pq_showcase_example);
 
@@ -216,9 +201,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     zns_demo_example.root_module.addImport("zqlite", lib.root_module);
-    if (shroud_dep) |dep| {
-        zns_demo_example.root_module.addImport("shroud", dep.module("shroud"));
-    }
+    zns_demo_example.root_module.addImport("shroud", shroud_dep.module("shroud"));
     zns_demo_example.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
     b.installArtifact(zns_demo_example);
 
@@ -235,9 +218,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     banking_example.root_module.addImport("zqlite", lib.root_module);
-    if (shroud_dep) |dep| {
-        banking_example.root_module.addImport("shroud", dep.module("shroud"));
-    }
+    banking_example.root_module.addImport("shroud", shroud_dep.module("shroud"));
     banking_example.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
     b.installArtifact(banking_example);
 
