@@ -8,6 +8,7 @@ const db = @import("../db/connection.zig");
 pub const VirtualMachine = struct {
     allocator: std.mem.Allocator,
     connection: *db.Connection,
+    parameters: ?[]storage.Value, // Optional parameters for prepared statements
 
     const Self = @This();
 
@@ -16,6 +17,7 @@ pub const VirtualMachine = struct {
         return Self{
             .allocator = allocator,
             .connection = connection,
+            .parameters = null,
         };
     }
 
@@ -31,6 +33,15 @@ pub const VirtualMachine = struct {
         }
 
         return result;
+    }
+
+    /// Execute a query plan with parameters (for prepared statements)
+    pub fn executeWithParameters(self: *Self, plan: *planner.ExecutionPlan, parameters: []storage.Value) !ExecutionResult {
+        // Set parameters for this execution
+        self.parameters = parameters;
+        defer self.parameters = null; // Clear parameters after execution
+        
+        return self.execute(plan);
     }
 
     /// Execute a single step
@@ -131,6 +142,24 @@ pub const VirtualMachine = struct {
     }
 
     /// Clone a storage value
+    /// Resolve a value, substituting parameters if needed
+    fn resolveValue(self: *Self, value: storage.Value) !storage.Value {
+        return switch (value) {
+            .Parameter => |param_index| blk: {
+                if (self.parameters) |params| {
+                    if (param_index < params.len) {
+                        break :blk params[param_index];
+                    } else {
+                        return error.ParameterIndexOutOfBounds;
+                    }
+                } else {
+                    return error.NoParametersProvided;
+                }
+            },
+            else => value, // Return the value as-is for non-parameters
+        };
+    }
+
     fn cloneValue(self: *Self, value: storage.Value) !storage.Value {
         return switch (value) {
             .Integer => |i| storage.Value{ .Integer = i },
@@ -138,6 +167,7 @@ pub const VirtualMachine = struct {
             .Text => |t| storage.Value{ .Text = try self.allocator.dupe(u8, t) },
             .Blob => |b| storage.Value{ .Blob = try self.allocator.dupe(u8, b) },
             .Null => storage.Value.Null,
+            .Parameter => |_| return error.UnresolvedParameter, // Parameters should be resolved before cloning
         };
     }
 
@@ -167,7 +197,7 @@ pub const VirtualMachine = struct {
             // Clone the values to ensure they're owned by the storage engine
             var cloned_values = try self.allocator.alloc(storage.Value, row_values.len);
             for (row_values, 0..) |value, i| {
-                cloned_values[i] = try self.cloneValue(value);
+                cloned_values[i] = try self.cloneValue(try self.resolveValue(value));
             }
 
             const row = storage.Row{ .values = cloned_values };
@@ -435,7 +465,29 @@ pub const VirtualMachine = struct {
                     .Real => |r| storage.Value{ .Real = r },
                     .Blob => |b| storage.Value{ .Blob = try self.allocator.dupe(u8, b) },
                     .Null => storage.Value.Null,
+                    .Parameter => |param_index| {
+                        if (self.parameters) |params| {
+                            if (param_index < params.len) {
+                                return try self.resolveValue(params[param_index]);
+                            } else {
+                                return error.ParameterIndexOutOfBounds;
+                            }
+                        } else {
+                            return error.NoParametersProvided;
+                        }
+                    },
                 };
+            },
+            .Parameter => |param_index| {
+                if (self.parameters) |params| {
+                    if (param_index < params.len) {
+                        return try self.resolveValue(params[param_index]);
+                    } else {
+                        return error.ParameterIndexOutOfBounds;
+                    }
+                } else {
+                    return error.NoParametersProvided;
+                }
             },
         };
     }
@@ -467,6 +519,7 @@ pub const VirtualMachine = struct {
                 .Null => .eq,
                 else => .lt,
             },
+            .Parameter => .gt, // Parameters should have been resolved before comparison
         };
     }
 
@@ -729,6 +782,7 @@ pub fn execute(connection: *db.Connection, parsed: *const ast.Statement) !void {
                             .Real => |real| std.debug.print("{d:.2}", .{real}),
                             .Null => std.debug.print("NULL", .{}),
                             .Blob => std.debug.print("<blob>", .{}),
+                            .Parameter => |param_index| std.debug.print("?{d}", .{param_index}),
                         }
                     }
                     std.debug.print(" │\n", .{});

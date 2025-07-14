@@ -55,24 +55,75 @@ pub const Connection = struct {
     }
 
     /// Begin a transaction
-    pub fn begin(self: *Self) !void {
+    pub fn beginTransaction(self: *Self) !void {
         if (self.wal) |w| {
             try w.beginTransaction();
         }
     }
+    
+    /// Begin a transaction (alias)
+    pub fn begin(self: *Self) !void {
+        try self.beginTransaction();
+    }
 
     /// Commit a transaction
-    pub fn commit(self: *Self) !void {
+    pub fn commitTransaction(self: *Self) !void {
         if (self.wal) |w| {
             try w.commit();
         }
     }
+    
+    /// Commit a transaction (alias)
+    pub fn commit(self: *Self) !void {
+        try self.commitTransaction();
+    }
 
     /// Rollback a transaction
-    pub fn rollback(self: *Self) !void {
+    pub fn rollbackTransaction(self: *Self) !void {
         if (self.wal) |w| {
             try w.rollback();
         }
+    }
+    
+    /// Rollback a transaction (alias)
+    pub fn rollback(self: *Self) !void {
+        try self.rollbackTransaction();
+    }
+
+    /// Execute a function within a transaction with automatic rollback on error
+    pub fn transaction(self: *Self, comptime context_type: type, function: *const fn (self: *Self, context: context_type) anyerror!void, context: context_type) !void {
+        try self.begin();
+        errdefer self.rollback() catch |err| {
+            std.log.err("Failed to rollback transaction: {}", .{err});
+        };
+        
+        try function(self, context);
+        try self.commit();
+    }
+
+    /// Execute a function within a transaction (no context parameter)
+    pub fn transactionSimple(self: *Self, function: *const fn (self: *Self) anyerror!void) !void {
+        try self.begin();
+        errdefer self.rollback() catch |err| {
+            std.log.err("Failed to rollback transaction: {}", .{err});
+        };
+        
+        try function(self);
+        try self.commit();
+    }
+
+    /// Execute multiple SQL statements within a transaction
+    pub fn transactionExec(self: *Self, sql_statements: []const []const u8) !void {
+        try self.begin();
+        errdefer self.rollback() catch |err| {
+            std.log.err("Failed to rollback transaction: {}", .{err});
+        };
+        
+        for (sql_statements) |sql| {
+            try self.execute(sql);
+        }
+        
+        try self.commit();
     }
 
     /// Prepare a SQL statement
@@ -160,10 +211,41 @@ pub const PreparedStatement = struct {
         self.parameters[index] = try cloneValue(self.allocator, value);
     }
 
+    /// Simplified parameter binding with auto-type detection
+    pub fn bind(self: *Self, index: u32, value: anytype) !void {
+        const value_type = @TypeOf(value);
+        const storage_value = switch (value_type) {
+            i8, i16, i32, i64, u8, u16, u32 => storage.Value{ .Integer = @intCast(value) },
+            comptime_int => storage.Value{ .Integer = value },
+            f32, f64 => storage.Value{ .Real = @floatCast(value) },
+            comptime_float => storage.Value{ .Real = value },
+            []const u8 => storage.Value{ .Text = value },
+            *const [5:0]u8, *const [4:0]u8, *const [3:0]u8, *const [6:0]u8, *const [7:0]u8, *const [8:0]u8, *const [9:0]u8, *const [10:0]u8, *const [11:0]u8, *const [12:0]u8, *const [13:0]u8, *const [14:0]u8, *const [15:0]u8, *const [16:0]u8, *const [17:0]u8, *const [18:0]u8, *const [19:0]u8, *const [20:0]u8 => storage.Value{ .Text = value },
+            else => @compileError("Unsupported type for bind: " ++ @typeName(value_type) ++ " - use bindParameter() instead"),
+        };
+        
+        try self.bindParameter(index, storage_value);
+    }
+
+    /// Bind NULL value
+    pub fn bindNull(self: *Self, index: u32) !void {
+        try self.bindParameter(index, storage.Value.Null);
+    }
+
+    /// Bind named parameter (future enhancement - for now just use positional)
+    pub fn bindNamed(self: *Self, name: []const u8, value: anytype) !void {
+        // For now, this is a placeholder. Named parameters would require
+        // tracking parameter names during SQL parsing
+        _ = self;
+        _ = name;
+        _ = value;
+        return error.NamedParametersNotSupported;
+    }
+
     /// Execute the prepared statement
     pub fn execute(self: *Self, connection: *Connection) !vm.ExecutionResult {
         var virtual_machine = vm.VirtualMachine.init(connection.allocator, connection);
-        return virtual_machine.execute(&self.execution_plan);
+        return virtual_machine.executeWithParameters(&self.execution_plan, self.parameters);
     }
 
     /// Reset parameters
@@ -207,6 +289,7 @@ pub const PreparedStatement = struct {
             .Text => |t| storage.Value{ .Text = try allocator.dupe(u8, t) },
             .Blob => |b| storage.Value{ .Blob = try allocator.dupe(u8, b) },
             .Null => storage.Value.Null,
+            .Parameter => |param_index| storage.Value{ .Parameter = param_index },
         };
     }
 };

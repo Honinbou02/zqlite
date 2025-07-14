@@ -87,11 +87,11 @@ const NextGenDatabase = struct {
     /// Store AI agent configuration with encryption
     pub fn storeAIAgent(self: *Self, name: []const u8, config: []const u8, api_key: []const u8) !void {
         // Encrypt sensitive data
-        var encrypted_config = try self.crypto.encryptField(config);
-        defer encrypted_config.deinit(self.allocator);
+        const encrypted_config = try self.crypto.encryptField(config);
+        defer self.allocator.free(encrypted_config);
 
-        var encrypted_api_key = try self.crypto.encryptField(api_key);
-        defer encrypted_api_key.deinit(self.allocator);
+        const encrypted_api_key = try self.crypto.encryptField(api_key);
+        defer self.allocator.free(encrypted_api_key);
 
         var buf: [1024]u8 = undefined;
         const sql = try std.fmt.bufPrint(buf[0..], "INSERT INTO ai_agents (name, encrypted_config, api_keys, created_at) VALUES ('{s}', 'encrypted', 'encrypted', {})", .{ name, std.time.timestamp() });
@@ -102,8 +102,8 @@ const NextGenDatabase = struct {
 
     /// Store VPN connection with encrypted certificate
     pub fn storeVPNConnection(self: *Self, client_id: []const u8, certificate: []const u8, ip_address: []const u8) !void {
-        var encrypted_cert = try self.crypto.encryptField(certificate);
-        defer encrypted_cert.deinit(self.allocator);
+        const encrypted_cert = try self.crypto.encryptField(certificate);
+        defer self.allocator.free(encrypted_cert);
 
         var buf: [512]u8 = undefined;
         const sql = try std.fmt.bufPrint(buf[0..], "INSERT INTO vpn_connections (client_id, encrypted_cert, connection_time, ip_address, data_transferred) VALUES ('{s}', 'encrypted', {}, '{s}', 0)", .{ client_id, std.time.timestamp(), ip_address });
@@ -114,8 +114,8 @@ const NextGenDatabase = struct {
 
     /// Store crypto wallet with encrypted private key
     pub fn storeCryptoWallet(self: *Self, address: []const u8, private_key: []const u8, balance: u64) !void {
-        var encrypted_key = try self.crypto.encryptField(private_key);
-        defer encrypted_key.deinit(self.allocator);
+        const encrypted_key = try self.crypto.encryptField(private_key);
+        defer self.allocator.free(encrypted_key);
 
         var buf: [512]u8 = undefined;
         const sql = try std.fmt.bufPrint(buf[0..], "INSERT INTO crypto_wallets (address, encrypted_private_key, balance, created_at) VALUES ('{s}', 'encrypted', {}, {})", .{ address, balance, std.time.timestamp() });
@@ -158,20 +158,20 @@ const NextGenDatabase = struct {
         std.debug.print("\n🔐 Cryptographic Security Demo\n", .{});
 
         // Generate key pair for signing
-        _ = try self.crypto.generateKeyPair(); // Generate keypair for demonstration
+        const keypair = try self.crypto.generateKeyPair();
 
         // Sign a transaction
         const transaction_data = "TRANSFER 1000 BTC FROM wallet_1 TO wallet_2";
         const signature = try self.crypto.signTransaction(transaction_data);
 
         // Verify the signature
-        const is_valid = try self.crypto.verifyTransaction(transaction_data, signature);
+        const is_valid = try self.crypto.verifyTransaction(transaction_data, signature, keypair.public_key);
         std.debug.print("✅ Transaction signature valid: {}\n", .{is_valid});
 
         // Password hashing for user auth
         const password = "super_secure_password_123";
-        var hash = try self.crypto.hashPassword(password);
-        defer hash.deinit(self.allocator);
+        const hash = try self.crypto.hashPassword(password);
+        defer self.allocator.free(hash);
 
         const password_valid = try self.crypto.verifyPassword(password, hash);
         std.debug.print("✅ Password verification: {}\n", .{password_valid});

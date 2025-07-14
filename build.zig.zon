@@ -1,18 +1,13 @@
 .{
     .name = .zqlite,
-    .version = "0.8.0",
+    .version = "1.0.0",
     .fingerprint = 0x9fb4d74ae26e27d0,
 
     .dependencies = .{
-        // Async operations - core dependency
-        .tokioz = .{
-            .url = "https://github.com/ghostkellz/tokioz/archive/main.tar.gz",
-            .hash = "TokioZ-0.0.0-DgtPReljAgAuGaoLtQCm_E-UA_7j_TAGQ8kkV-mtjz4V",
-        },
-        // Shroud crypto - optional dependency for advanced features
+        // Crypto + QUIC and Major Network operations library (includes zsync)
         .shroud = .{
-            .url = "https://github.com/ghostkellz/shroud/archive/main.tar.gz",
-            .hash = "shroud-0.4.0-z7C8meSFOAVHhmfnRjKbbavwmd55NEfaOisYuoMKeYWL",
+            .url = "https://github.com/ghostkellz/shroud/archive/refs/heads/main.tar.gz",
+            .hash = "shroud-1.0.1-z7C8mahctAPpLPuaNG8k4vMfxAoAMCgaa770VRz4FOOP",
         },
     },
 

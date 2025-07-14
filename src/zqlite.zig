@@ -2,7 +2,7 @@ const std = @import("std");
 
 // Core database modules
 pub const db = @import("db/connection.zig");
-pub const Connection = db.Connection;  // Export for convenience
+pub const Connection = db.Connection; // Export for convenience
 pub const storage = @import("db/storage.zig");
 pub const btree = @import("db/btree.zig");
 pub const wal = @import("db/wal.zig");
@@ -25,13 +25,6 @@ pub const cli = @import("shell/cli.zig");
 pub const crypto = struct {
     pub const CryptoEngine = @import("crypto/secure_storage.zig").CryptoEngine;
     pub const CryptoTransactionLog = @import("crypto/secure_storage.zig").CryptoTransactionLog;
-    pub const CryptoInterface = @import("crypto/interface.zig").CryptoInterface;
-    pub const CryptoConfig = @import("crypto/interface.zig").CryptoConfig;
-    pub const CryptoBackend = @import("crypto/interface.zig").CryptoBackend;
-    pub const HashVerifier = @import("crypto/hash_verification.zig").HashVerifier;
-    pub const StabilityMonitor = @import("crypto/hash_verification.zig").StabilityMonitor;
-    pub const ZKProof = @import("crypto/secure_storage.zig").ZKProof;
-    pub const HybridSignature = @import("crypto/secure_storage.zig").HybridSignature;
     pub const EncryptedField = struct {
         ciphertext: []u8,
         nonce: [12]u8,
@@ -39,6 +32,23 @@ pub const crypto = struct {
 
         pub fn deinit(self: *EncryptedField, allocator: std.mem.Allocator) void {
             allocator.free(self.ciphertext);
+        }
+    };
+    pub const ZKProof = struct {
+        proof_data: []u8,
+        commitment: [32]u8,
+        challenge: [32]u8,
+
+        pub fn deinit(self: *ZKProof, allocator: std.mem.Allocator) void {
+            allocator.free(self.proof_data);
+        }
+    };
+    pub const HybridSignature = struct {
+        classical: [64]u8, // Ed25519 signature
+        post_quantum: []u8, // ML-DSA-65 signature
+
+        pub fn deinit(self: *HybridSignature, allocator: std.mem.Allocator) void {
+            allocator.free(self.post_quantum);
         }
     };
 };
@@ -49,16 +59,15 @@ pub const async_ops = @import("concurrent/async_operations.zig");
 // Post-quantum transport (optional)
 pub const transport = struct {
     pub const Transport = @import("transport/transport.zig").Transport;
+    pub const PQQuicTransport = @import("transport/pq_quic.zig").PQQuicTransport;
+    pub const PQDatabaseTransport = @import("transport/pq_quic.zig").PQDatabaseTransport;
 };
 
 // Advanced indexing
 pub const advanced_indexes = @import("indexing/advanced_indexes.zig");
 
-// ZNS Integration (NEW in v0.8.0)
-pub const zns_adapter = @import("crypto/zns_adapter.zig");
-
 // Version and metadata
-pub const version = "0.8.0";
+pub const version = "0.3.0";
 pub const build_info = "zqlite " ++ version ++ " - Next-generation cryptographic database";
 
 // Main API functions

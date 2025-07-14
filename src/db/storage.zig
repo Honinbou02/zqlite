@@ -245,6 +245,7 @@ pub const Value = union(enum) {
     Real: f64,
     Blob: []const u8,
     Null,
+    Parameter: u32, // Parameter placeholder index
 
     pub fn deinit(self: Value, allocator: std.mem.Allocator) void {
         switch (self) {

@@ -369,6 +369,7 @@ pub const Planner = struct {
         return switch (expression.*) {
             .Column => |col| ast.Expression{ .Column = try self.allocator.dupe(u8, col) },
             .Literal => |value| ast.Expression{ .Literal = try self.cloneAstValue(value) },
+            .Parameter => |param_index| ast.Expression{ .Parameter = param_index },
         };
     }
 
@@ -380,6 +381,7 @@ pub const Planner = struct {
             .Real => |r| storage.Value{ .Real = r },
             .Blob => |b| storage.Value{ .Blob = try self.allocator.dupe(u8, b) },
             .Null => storage.Value.Null,
+            .Parameter => |param_index| storage.Value{ .Parameter = param_index },
         };
     }
 
@@ -391,6 +393,7 @@ pub const Planner = struct {
             .Real => |r| ast.Value{ .Real = r },
             .Blob => |b| ast.Value{ .Blob = try self.allocator.dupe(u8, b) },
             .Null => ast.Value.Null,
+            .Parameter => |param_index| ast.Value{ .Parameter = param_index },
         };
     }
 };

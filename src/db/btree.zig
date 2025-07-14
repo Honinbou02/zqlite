@@ -191,6 +191,7 @@ pub const BTree = struct {
                         .Text => |text| storage.Value{ .Text = try self.allocator.dupe(u8, text) },
                         .Blob => |blob| storage.Value{ .Blob = try self.allocator.dupe(u8, blob) },
                         .Null => storage.Value.Null,
+                        .Parameter => |param_index| storage.Value{ .Parameter = param_index },
                     };
                 }
 
@@ -532,6 +533,10 @@ const Node = struct {
                 .Null => {
                     try writer.writeInt(u8, 0, .little); // Type tag
                 },
+                .Parameter => |param_index| {
+                    try writer.writeInt(u8, 5, .little); // Type tag
+                    try writer.writeInt(u32, param_index, .little);
+                },
             }
         }
     }
@@ -601,6 +606,7 @@ const Node = struct {
                     _ = try reader.readAll(blob);
                     break :blk storage.Value{ .Blob = blob };
                 },
+                5 => storage.Value{ .Parameter = try reader.readInt(u32, .little) },
                 else => return error.InvalidValueType,
             };
         }

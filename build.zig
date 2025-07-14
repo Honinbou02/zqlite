@@ -1,21 +1,15 @@
-//! Use `zig init --strip` next time to generate a project without comments.
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     
-    // Get dependencies - Shroud is required for v0.8.0
-    const shroud_dep = b.dependency("shroud", .{
+    // Add Shroud dependency (includes zsync)
+    const shroud = b.dependency("shroud", .{
         .target = target,
         .optimize = optimize,
     });
-
-    const tokioz_dep = b.dependency("tokioz", .{
-        .target = target,
-        .optimize = optimize,
-    });
-
+    
     // Create the zqlite library
     const lib = b.addStaticLibrary(.{
         .name = "zqlite",
@@ -24,9 +18,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // Add dependency modules
-    lib.root_module.addImport("shroud", shroud_dep.module("shroud"));
-    lib.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
+    // Add dependencies to library
+    lib.root_module.addImport("shroud", shroud.module("shroud"));
 
     // Install the library
     b.installArtifact(lib);
@@ -37,8 +30,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    zqlite_module.addImport("shroud", shroud_dep.module("shroud"));
-    zqlite_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
+    
+    // Add dependencies to exported module
+    zqlite_module.addImport("shroud", shroud.module("shroud"));
 
     // Create the zqlite executable
     const exe = b.addExecutable(.{
@@ -48,10 +42,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // Link the library to the executable
+    // Link the library to the executable and add dependencies
     exe.root_module.addImport("zqlite", lib.root_module);
-    exe.root_module.addImport("shroud", shroud_dep.module("shroud"));
-    exe.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
+    exe.root_module.addImport("shroud", shroud.module("shroud"));
 
     // Install the executable
     b.installArtifact(exe);
@@ -72,6 +65,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    
+    // Add dependencies to tests
+    lib_unit_tests.root_module.addImport("shroud", shroud.module("shroud"));
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
@@ -82,6 +78,7 @@ pub fn build(b: *std.Build) void {
     });
 
     exe_unit_tests.root_module.addImport("zqlite", lib.root_module);
+    exe_unit_tests.root_module.addImport("shroud", shroud.module("shroud"));
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
@@ -89,141 +86,21 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_lib_unit_tests.step);
     test_step.dependOn(&run_exe_unit_tests.step);
 
-    // Create the PowerDNS example
-    const powerdns_example = b.addExecutable(.{
-        .name = "powerdns_example",
-        .root_source_file = b.path("examples/powerdns_example.zig"),
+    // Basic examples that work without external dependencies
+    createBasicExample(b, "powerdns_example", lib, target, optimize, shroud);
+    createBasicExample(b, "cipher_dns", lib, target, optimize, shroud);
+}
+
+fn createBasicExample(b: *std.Build, name: []const u8, lib: *std.Build.Step.Compile, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, shroud: *std.Build.Dependency) void {
+    
+    const example = b.addExecutable(.{
+        .name = name,
+        .root_source_file = b.path(b.fmt("examples/{s}.zig", .{name})),
         .target = target,
         .optimize = optimize,
     });
 
-    // Link the library to the example
-    powerdns_example.root_module.addImport("zqlite", lib.root_module);
-
-    // Install the example
-    b.installArtifact(powerdns_example);
-
-    // Create run step for PowerDNS example
-    const run_powerdns_cmd = b.addRunArtifact(powerdns_example);
-    run_powerdns_cmd.step.dependOn(b.getInstallStep());
-
-    const run_powerdns_step = b.step("run-powerdns", "Run the PowerDNS example");
-    run_powerdns_step.dependOn(&run_powerdns_cmd.step);
-
-    // Create the Cipher DNS example
-    const cipher_example = b.addExecutable(.{
-        .name = "cipher_dns",
-        .root_source_file = b.path("examples/cipher_dns.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    // Link the library to the Cipher example
-    cipher_example.root_module.addImport("zqlite", lib.root_module);
-
-    // Install the Cipher example
-    b.installArtifact(cipher_example);
-
-    // Create run step for Cipher DNS example
-    const run_cipher_cmd = b.addRunArtifact(cipher_example);
-    run_cipher_cmd.step.dependOn(b.getInstallStep());
-
-    const run_cipher_step = b.step("run-cipher", "Run the Cipher DNS example");
-    run_cipher_step.dependOn(&run_cipher_cmd.step);
-
-    // Create the Next-Gen Database example
-    const nextgen_example = b.addExecutable(.{
-        .name = "nextgen_database",
-        .root_source_file = b.path("examples/nextgen_database.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    // Link all modules to the Next-Gen example
-    nextgen_example.root_module.addImport("zqlite", lib.root_module);
-    nextgen_example.root_module.addImport("shroud", shroud_dep.module("shroud"));
-    nextgen_example.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
-
-    // Install the Next-Gen example
-    b.installArtifact(nextgen_example);
-
-    // Create run step for Next-Gen example
-    const run_nextgen_cmd = b.addRunArtifact(nextgen_example);
-    run_nextgen_cmd.step.dependOn(b.getInstallStep());
-
-    const run_nextgen_step = b.step("run-nextgen", "Run the Next-Generation Database example");
-    run_nextgen_step.dependOn(&run_nextgen_cmd.step);
-
-    // Advanced indexing demo
-    const advanced_indexing_demo = b.addExecutable(.{
-        .name = "advanced_indexing_demo",
-        .root_source_file = b.path("examples/advanced_indexing_demo.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    advanced_indexing_demo.root_module.addImport("zqlite", lib.root_module);
-    advanced_indexing_demo.root_module.addImport("shroud", shroud_dep.module("shroud"));
-    advanced_indexing_demo.root_module.addImport("ghostcipher", shroud_dep.module("ghostcipher"));
-    advanced_indexing_demo.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
-    b.installArtifact(advanced_indexing_demo);
-
-    // Run step for advanced indexing demo
-    const run_advanced_indexing = b.addRunArtifact(advanced_indexing_demo);
-    run_advanced_indexing.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        run_advanced_indexing.addArgs(args);
-    }
-    const run_advanced_indexing_step = b.step("run-advanced-indexing", "Run the advanced indexing demo");
-    run_advanced_indexing_step.dependOn(&run_advanced_indexing.step);
-
-    // Post-Quantum Showcase Example (NEW in v0.5.0)
-    const pq_showcase_example = b.addExecutable(.{
-        .name = "post_quantum_showcase",
-        .root_source_file = b.path("examples/post_quantum_showcase.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    pq_showcase_example.root_module.addImport("zqlite", lib.root_module);
-    pq_showcase_example.root_module.addImport("shroud", shroud_dep.module("shroud"));
-    pq_showcase_example.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
-    b.installArtifact(pq_showcase_example);
-
-    const run_pq_showcase = b.addRunArtifact(pq_showcase_example);
-    run_pq_showcase.step.dependOn(b.getInstallStep());
-    const run_pq_showcase_step = b.step("run-pq-showcase", "Run the post-quantum showcase demo");
-    run_pq_showcase_step.dependOn(&run_pq_showcase.step);
-
-    // ZNS Ghostchain Demo (NEW in v0.8.0)
-    const zns_demo_example = b.addExecutable(.{
-        .name = "zns_ghostchain_demo",
-        .root_source_file = b.path("examples/zns_ghostchain_demo.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    zns_demo_example.root_module.addImport("zqlite", lib.root_module);
-    zns_demo_example.root_module.addImport("shroud", shroud_dep.module("shroud"));
-    zns_demo_example.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
-    b.installArtifact(zns_demo_example);
-
-    const run_zns_demo = b.addRunArtifact(zns_demo_example);
-    run_zns_demo.step.dependOn(b.getInstallStep());
-    const run_zns_demo_step = b.step("run-zns-demo", "Run the ZNS Ghostchain integration demo");
-    run_zns_demo_step.dependOn(&run_zns_demo.step);
-
-    // Hybrid Crypto Banking Example (NEW in v0.5.0)
-    const banking_example = b.addExecutable(.{
-        .name = "hybrid_crypto_banking",
-        .root_source_file = b.path("examples/hybrid_crypto_banking.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    banking_example.root_module.addImport("zqlite", lib.root_module);
-    banking_example.root_module.addImport("shroud", shroud_dep.module("shroud"));
-    banking_example.root_module.addImport("tokioz", tokioz_dep.module("TokioZ"));
-    b.installArtifact(banking_example);
-
-    const run_banking = b.addRunArtifact(banking_example);
-    run_banking.step.dependOn(b.getInstallStep());
-    const run_banking_step = b.step("run-banking", "Run the hybrid crypto banking demo");
-    run_banking_step.dependOn(&run_banking.step);
+    example.root_module.addImport("zqlite", lib.root_module);
+    example.root_module.addImport("shroud", shroud.module("shroud"));
+    b.installArtifact(example);
 }

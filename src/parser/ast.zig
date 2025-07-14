@@ -105,6 +105,10 @@ pub const CreateTableStatement = struct {
         allocator.free(self.table_name);
         for (self.columns) |column| {
             allocator.free(column.name);
+            for (column.constraints) |constraint| {
+                constraint.deinit(allocator);
+            }
+            allocator.free(column.constraints);
         }
         allocator.free(self.columns);
     }
@@ -198,12 +202,60 @@ pub const DataType = enum {
     Blob,
 };
 
+/// Default value for column constraints
+pub const DefaultValue = union(enum) {
+    Literal: Value,
+    FunctionCall: FunctionCall,
+    
+    pub fn deinit(self: DefaultValue, allocator: std.mem.Allocator) void {
+        switch (self) {
+            .Literal => |value| value.deinit(allocator),
+            .FunctionCall => |func| func.deinit(allocator),
+        }
+    }
+};
+
+/// Function call expression
+pub const FunctionCall = struct {
+    name: []const u8,
+    arguments: []FunctionArgument,
+    
+    pub fn deinit(self: FunctionCall, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        for (self.arguments) |arg| {
+            arg.deinit(allocator);
+        }
+        allocator.free(self.arguments);
+    }
+};
+
+/// Function call argument
+pub const FunctionArgument = union(enum) {
+    Literal: Value,
+    String: []const u8,
+    
+    pub fn deinit(self: FunctionArgument, allocator: std.mem.Allocator) void {
+        switch (self) {
+            .Literal => |value| value.deinit(allocator),
+            .String => |str| allocator.free(str),
+        }
+    }
+};
+
 /// Column constraints
-pub const ColumnConstraint = enum {
+pub const ColumnConstraint = union(enum) {
     PrimaryKey,
     NotNull,
     Unique,
     AutoIncrement,
+    Default: DefaultValue,
+    
+    pub fn deinit(self: ColumnConstraint, allocator: std.mem.Allocator) void {
+        switch (self) {
+            .Default => |default| default.deinit(allocator),
+            else => {},
+        }
+    }
 };
 
 /// WHERE clause
@@ -276,11 +328,13 @@ pub const LogicalOperator = enum {
 pub const Expression = union(enum) {
     Column: []const u8,
     Literal: Value,
+    Parameter: u32, // Parameter placeholder index
 
     pub fn deinit(self: *Expression, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .Column => |col| allocator.free(col),
             .Literal => |value| value.deinit(allocator),
+            .Parameter => {},
         }
     }
 };
@@ -298,6 +352,7 @@ pub const Value = union(enum) {
     Real: f64,
     Blob: []const u8,
     Null,
+    Parameter: u32, // Parameter placeholder index
 
     pub fn deinit(self: Value, allocator: std.mem.Allocator) void {
         switch (self) {

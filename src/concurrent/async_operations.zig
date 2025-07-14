@@ -1,5 +1,6 @@
 const std = @import("std");
-const tokioz = @import("tokioz");
+const shroud = @import("shroud");
+const zsync = shroud.zsync;
 const storage = @import("../db/storage.zig");
 const connection = @import("../db/connection.zig");
 
@@ -8,58 +9,181 @@ const connection = @import("../db/connection.zig");
 pub const AsyncDatabase = struct {
     allocator: std.mem.Allocator,
     connection_pool: ConnectionPool,
-    task_queue: tokioz.TaskQueue,
-    runtime: *tokioz.Runtime,
+    io: zsync.ThreadPoolIo,
 
     const Self = @This();
 
     pub fn init(allocator: std.mem.Allocator, db_path: []const u8, pool_size: u32) !Self {
-        const runtime = try tokioz.Runtime.init(allocator, .{});
-        const task_queue = try tokioz.TaskQueue.init(allocator, 1000); // 1000 concurrent tasks
         const connection_pool = try ConnectionPool.init(allocator, db_path, pool_size);
 
         return Self{
             .allocator = allocator,
             .connection_pool = connection_pool,
-            .task_queue = task_queue,
-            .runtime = runtime,
+            .io = zsync.ThreadPoolIo{},
         };
     }
 
     /// Execute SQL asynchronously (production-ready for AI agents)
-    pub fn executeAsync(self: *Self, sql: []const u8) !tokioz.JoinHandle {
-        _ = sql; // TODO: Implement with proper async SQL execution
-        return try self.task_queue.spawn(struct {
-            pub fn run() void {
-                // Async SQL execution placeholder
-            }
-        }.run);
+    pub fn executeAsync(self: *Self, sql: []const u8) !QueryResult {
+        var future = self.io.async(executeSqlWorker, .{ self, sql });
+        defer future.cancel(self.io) catch {};
+        
+        return try future.await(self.io);
     }
 
     /// Batch execute multiple queries (production-ready for AI agents)
-    pub fn batchExecuteAsync(self: *Self, queries: [][]const u8) !tokioz.JoinHandle {
-        _ = queries; // TODO: Implement with proper batch execution
-        return try self.task_queue.spawn(struct {
-            pub fn run() void {
-                // Async batch execution placeholder
-            }
-        }.run);
+    pub fn batchExecuteAsync(self: *Self, queries: [][]const u8) ![]QueryResult {
+        var future = self.io.async(batchExecuteWorker, .{ self, queries });
+        defer future.cancel(self.io) catch {};
+        
+        return try future.await(self.io);
     }
 
     /// Transaction processing (production-ready for VPN logging)
-    pub fn transactionAsync(self: *Self, queries: [][]const u8) !tokioz.JoinHandle {
-        _ = queries; // TODO: Implement with proper transaction support
-        return try self.task_queue.spawn(struct {
-            pub fn run() void {
-                // Async transaction placeholder
+    pub fn transactionAsync(self: *Self, queries: [][]const u8) !QueryResult {
+        var future = self.io.async(transactionWorker, .{ self, queries });
+        defer future.cancel(self.io) catch {};
+        
+        return try future.await(self.io);
+    }
+
+    fn executeSqlWorker(self: *AsyncDatabase, sql: []const u8) !QueryResult {
+        defer zsync.yieldNow();
+        
+        const conn = try self.connection_pool.acquire();
+        defer self.connection_pool.release(conn);
+        
+        // Parse and execute SQL
+        const parser = @import("../parser/parser.zig");
+        const vm = @import("../executor/vm.zig");
+        
+        var parsed = parser.parse(self.allocator, sql) catch |err| {
+            const error_msg = try std.fmt.allocPrint(self.allocator, "Parse error: {}", .{err});
+            return QueryResult{
+                .rows = &[_]storage.Row{},
+                .affected_rows = 0,
+                .success = false,
+                .error_message = error_msg,
+            };
+        };
+        defer parsed.deinit(self.allocator);
+        
+        var virtual_machine = vm.VirtualMachine.init(self.allocator, conn);
+        var planner = @import("../executor/planner.zig").Planner.init(self.allocator);
+        
+        var plan = planner.plan(&parsed) catch |err| {
+            const error_msg = try std.fmt.allocPrint(self.allocator, "Planning error: {}", .{err});
+            return QueryResult{
+                .rows = &[_]storage.Row{},
+                .affected_rows = 0,
+                .success = false,
+                .error_message = error_msg,
+            };
+        };
+        defer plan.deinit();
+        
+        var result = virtual_machine.execute(&plan) catch |err| {
+            const error_msg = try std.fmt.allocPrint(self.allocator, "Execution error: {}", .{err});
+            return QueryResult{
+                .rows = &[_]storage.Row{},
+                .affected_rows = 0,
+                .success = false,
+                .error_message = error_msg,
+            };
+        };
+        
+        // Convert ExecutionResult to QueryResult
+        var rows = try self.allocator.alloc(storage.Row, result.rows.items.len);
+        for (result.rows.items, 0..) |src_row, i| {
+            // Clone the row values
+            var values = try self.allocator.alloc(storage.Value, src_row.values.len);
+            for (src_row.values, 0..) |value, j| {
+                values[j] = try cloneValue(self.allocator, value);
             }
-        }.run);
+            rows[i] = storage.Row{ .values = values };
+        }
+        
+        result.deinit(self.allocator);
+        
+        return QueryResult{
+            .rows = rows,
+            .affected_rows = result.affected_rows,
+            .success = true,
+            .error_message = null,
+        };
+    }
+    
+    fn cloneValue(allocator: std.mem.Allocator, value: storage.Value) !storage.Value {
+        return switch (value) {
+            .Integer => |i| storage.Value{ .Integer = i },
+            .Real => |r| storage.Value{ .Real = r },
+            .Text => |t| storage.Value{ .Text = try allocator.dupe(u8, t) },
+            .Blob => |b| storage.Value{ .Blob = try allocator.dupe(u8, b) },
+            .Null => storage.Value.Null,
+            .Parameter => |p| storage.Value{ .Parameter = p },
+        };
+    }
+
+    fn batchExecuteWorker(self: *AsyncDatabase, queries: [][]const u8) ![]QueryResult {
+        defer zsync.yieldNow();
+        
+        var results = try self.allocator.alloc(QueryResult, queries.len);
+        
+        for (queries, 0..) |query, i| {
+            results[i] = try self.executeSqlWorker(query);
+            
+            // Yield every 10 queries to allow other tasks
+            if (i % 10 == 0) {
+                zsync.yieldNow();
+            }
+        }
+        
+        return results;
+    }
+
+    fn transactionWorker(self: *AsyncDatabase, queries: [][]const u8) !QueryResult {
+        defer zsync.yieldNow();
+        
+        const conn = try self.connection_pool.acquire();
+        defer self.connection_pool.release(conn);
+        
+        // Begin transaction
+        try conn.beginTransaction();
+        
+        var total_affected: u32 = 0;
+        errdefer conn.rollbackTransaction() catch {};
+        
+        // Execute all queries in transaction
+        for (queries) |query| {
+            const result = try self.executeSqlWorker(query);
+            defer result.deinit(self.allocator);
+            
+            if (!result.success) {
+                try conn.rollbackTransaction();
+                return QueryResult{
+                    .rows = &[_]storage.Row{},
+                    .affected_rows = 0,
+                    .success = false,
+                    .error_message = result.error_message,
+                };
+            }
+            
+            total_affected += result.affected_rows;
+        }
+        
+        // Commit transaction
+        try conn.commitTransaction();
+        
+        return QueryResult{
+            .rows = &[_]storage.Row{},
+            .affected_rows = total_affected,
+            .success = true,
+            .error_message = null,
+        };
     }
 
     pub fn deinit(self: *Self) void {
         self.connection_pool.deinit();
-        self.task_queue.deinit();
-        self.runtime.deinit();
     }
 };
 
@@ -123,9 +247,18 @@ pub const QueryResult = struct {
 
     pub fn deinit(self: *QueryResult, allocator: std.mem.Allocator) void {
         for (self.rows) |row| {
-            row.deinit(allocator);
+            for (row.values) |value| {
+                switch (value) {
+                    .Text => |t| allocator.free(t),
+                    .Blob => |b| allocator.free(b),
+                    else => {},
+                }
+            }
+            allocator.free(row.values);
         }
-        allocator.free(self.rows);
+        if (self.rows.len > 0) {
+            allocator.free(self.rows);
+        }
         if (self.error_message) |msg| {
             allocator.free(msg);
         }
@@ -166,8 +299,25 @@ pub const AIAgentDatabase = struct {
             .{agent_id});
         defer self.async_db.allocator.free(sql);
         
-        // TODO: Execute query and decrypt result
-        _ = try self.async_db.executeAsync(sql);
-        return try self.async_db.allocator.dupe(u8, "decrypted_credentials");
+        const result = try self.async_db.executeAsync(sql);
+        defer result.deinit(self.async_db.allocator);
+        
+        if (!result.success) {
+            return error.QueryFailed;
+        }
+        
+        if (result.rows.len == 0) {
+            return error.AgentNotFound;
+        }
+        
+        // Get encrypted data from first row, first column
+        const encrypted_data = switch (result.rows[0].values[0]) {
+            .Text => |t| t,
+            .Blob => |b| b,
+            else => return error.InvalidData,
+        };
+        
+        // Decrypt the data
+        return try self.crypto.decrypt(encrypted_data);
     }
 };

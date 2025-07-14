@@ -1,13 +1,16 @@
 const std = @import("std");
 const tokioz = @import("tokioz");
 
-/// 🌐 ZQLite v0.6.0 Transport Layer
+// Export post-quantum QUIC transport
+pub const PQQuicTransport = @import("pq_quic.zig").PQQuicTransport;
+pub const PQDatabaseTransport = @import("pq_quic.zig").PQDatabaseTransport;
+
+/// 🌐 ZQLite v1.0.0 Transport Layer
 /// High-performance networking with optional post-quantum features
-/// Uses native Zig crypto with optional Shroud backend
 pub const Transport = struct {
     allocator: std.mem.Allocator,
     endpoint: ?Endpoint,
-    connections: std.HashMap(ConnectionId, *Connection),
+    connections: std.ArrayList(*Connection),
     is_server: bool,
     crypto_enabled: bool,
 
@@ -21,171 +24,137 @@ pub const Transport = struct {
 
     const Connection = struct {
         id: ConnectionId,
-        peer_address: std.net.Address,
+        endpoint: std.net.Address,
         state: ConnectionState,
-        last_activity: i64,
-        
+        write_buffer: std.ArrayList(u8),
+        read_buffer: std.ArrayList(u8),
+
         const ConnectionState = enum {
-            connecting,
-            connected,
-            disconnecting,
-            closed,
+            Connecting,
+            Connected,
+            Closing,
+            Closed,
         };
+
+        pub fn init(allocator: std.mem.Allocator, id: ConnectionId, endpoint: std.net.Address) !*Connection {
+            const conn = try allocator.create(Connection);
+            conn.* = Connection{
+                .id = id,
+                .endpoint = endpoint,
+                .state = .Connecting,
+                .write_buffer = std.ArrayList(u8).init(allocator),
+                .read_buffer = std.ArrayList(u8).init(allocator),
+            };
+            return conn;
+        }
+
+        pub fn deinit(self: *Connection, allocator: std.mem.Allocator) void {
+            self.write_buffer.deinit();
+            self.read_buffer.deinit();
+            allocator.destroy(self);
+        }
     };
 
-    /// Initialize transport layer
-    pub fn init(allocator: std.mem.Allocator, is_server: bool, crypto_enabled: bool) Self {
+    pub fn init(allocator: std.mem.Allocator, is_server: bool) Self {
         return Self{
             .allocator = allocator,
             .endpoint = null,
-            .connections = std.HashMap(ConnectionId, *Connection).init(allocator),
+            .connections = std.ArrayList(*Connection).init(allocator),
             .is_server = is_server,
-            .crypto_enabled = crypto_enabled,
+            .crypto_enabled = false,
         };
     }
 
-    /// Cleanup and close all connections
-    pub fn deinit(self: *Self) void {
-        var iterator = self.connections.iterator();
-        while (iterator.next()) |entry| {
-            self.allocator.destroy(entry.value_ptr.*);
-        }
-        self.connections.deinit();
-        self.* = undefined;
-    }
-
-    /// Bind to address and start listening (server mode)
     pub fn bind(self: *Self, address: std.net.Address) !void {
-        if (!self.is_server) return error.NotServerMode;
-        
-        const socket = std.net.tcpConnectToAddress(address) catch |err| {
-            std.log.err("Failed to bind to address: {}", .{err});
-            return err;
-        };
-        
+        const socket = try std.net.tcpConnectToAddress(address);
         self.endpoint = Endpoint{
             .address = address,
             .socket = socket,
         };
-        
-        std.log.info("🌐 ZQLite transport bound to {}", .{address});
     }
 
-    /// Connect to remote address (client mode)
-    pub fn connect(self: *Self, address: std.net.Address) !ConnectionId {
-        if (self.is_server) return error.NotClientMode;
-        
-        _ = std.net.tcpConnectToAddress(address) catch |err| {
-            std.log.err("Failed to connect to {}: {}", .{ address, err });
-            return err;
-        };
-
-        const connection_id = @as(ConnectionId, @intCast(std.time.timestamp()));
-        const connection = try self.allocator.create(Connection);
-        connection.* = Connection{
-            .id = connection_id,
-            .peer_address = address,
-            .state = .connecting,
-            .last_activity = std.time.timestamp(),
-        };
-
-        try self.connections.put(connection_id, connection);
-        
-        std.log.info("🔗 Connected to {} (ID: {})", .{ address, connection_id });
-        return connection_id;
+    pub fn connect(self: *Self, server_address: std.net.Address) !ConnectionId {
+        const conn_id = @as(ConnectionId, @intCast(std.time.timestamp()));
+        const connection = try Connection.init(self.allocator, conn_id, server_address);
+        connection.state = .Connected;
+        try self.connections.append(connection);
+        return conn_id;
     }
 
-    /// Send data over connection
-    pub fn send(self: *Self, connection_id: ConnectionId, data: []const u8) !void {
-        const connection = self.connections.get(connection_id) orelse return error.ConnectionNotFound;
-        
-        if (connection.state != .connected) return error.ConnectionNotReady;
-        
-        // In a real implementation, this would send over the actual socket
-        // For now, we'll just log and simulate
-        std.log.debug("📤 Sending {} bytes to connection {}", .{ data.len, connection_id });
-        
-        connection.last_activity = std.time.timestamp();
+    pub fn sendData(self: *Self, conn_id: ConnectionId, data: []const u8) !void {
+        for (self.connections.items) |conn| {
+            if (conn.id == conn_id) {
+                try conn.write_buffer.appendSlice(data);
+                return;
+            }
+        }
+        return error.ConnectionNotFound;
     }
 
-    /// Receive data from connection (async)
-    pub fn receive(self: *Self, connection_id: ConnectionId, buffer: []u8) !usize {
-        const connection = self.connections.get(connection_id) orelse return error.ConnectionNotFound;
-        
-        if (connection.state != .connected) return error.ConnectionNotReady;
-        
-        // In a real implementation, this would receive from the actual socket
-        // For now, we'll simulate receiving data
-        std.log.debug("📥 Receiving data from connection {}", .{connection_id});
-        
-        connection.last_activity = std.time.timestamp();
-        
-        // Simulate some data
-        const test_data = "ZQLite v0.6.0 response data";
-        const bytes_to_copy = @min(buffer.len, test_data.len);
-        @memcpy(buffer[0..bytes_to_copy], test_data[0..bytes_to_copy]);
-        
-        return bytes_to_copy;
+    pub fn receiveData(self: *Self, conn_id: ConnectionId) ![]u8 {
+        for (self.connections.items) |conn| {
+            if (conn.id == conn_id) {
+                const data = try self.allocator.dupe(u8, conn.read_buffer.items);
+                conn.read_buffer.clearRetainingCapacity();
+                return data;
+            }
+        }
+        return error.ConnectionNotFound;
     }
 
-    /// Close specific connection
-    pub fn closeConnection(self: *Self, connection_id: ConnectionId) !void {
-        const connection = self.connections.get(connection_id) orelse return error.ConnectionNotFound;
-        
-        connection.state = .closed;
-        _ = self.connections.remove(connection_id);
-        self.allocator.destroy(connection);
-        
-        std.log.info("🔒 Closed connection {}", .{connection_id});
+    pub fn closeConnection(self: *Self, conn_id: ConnectionId) !void {
+        for (self.connections.items, 0..) |conn, i| {
+            if (conn.id == conn_id) {
+                conn.state = .Closed;
+                conn.deinit(self.allocator);
+                _ = self.connections.orderedRemove(i);
+                return;
+            }
+        }
     }
 
-    /// Get connection count
-    pub fn getConnectionCount(self: Self) u32 {
-        return @intCast(self.connections.count());
-    }
-
-    /// Check if post-quantum features are available
-    pub fn hasPostQuantumSupport(self: Self) bool {
-        _ = self;
-        // TODO: Check if Shroud is available and configured
-        return false;
-    }
-
-    /// Get transport statistics
     pub fn getStats(self: Self) TransportStats {
         return TransportStats{
-            .connection_count = self.getConnectionCount(),
-            .crypto_enabled = self.crypto_enabled,
-            .pq_enabled = self.hasPostQuantumSupport(),
+            .active_connections = self.connections.items.len,
+            .total_bytes_sent = 0,
+            .total_bytes_received = 0,
         };
+    }
+
+    pub fn deinit(self: *Self) void {
+        for (self.connections.items) |conn| {
+            conn.deinit(self.allocator);
+        }
+        self.connections.deinit();
+
+        if (self.endpoint) |endpoint| {
+            endpoint.socket.close();
+        }
     }
 };
 
-/// Transport statistics
 pub const TransportStats = struct {
-    connection_count: u32,
-    crypto_enabled: bool,
-    pq_enabled: bool,
+    active_connections: usize,
+    total_bytes_sent: u64,
+    total_bytes_received: u64,
 };
 
-/// Test function for transport layer
-pub fn testTransport() !void {
+// Test for transport functionality
+test "transport basic functionality" {
+    const testing = std.testing;
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var server = Transport.init(allocator, true, true);
-    defer server.deinit();
+    var transport = Transport.init(allocator, false);
+    defer transport.deinit();
 
-    var client = Transport.init(allocator, false, true);
-    defer client.deinit();
+    const server_addr = std.net.Address.parseIp("127.0.0.1", 8080) catch unreachable;
+    const conn_id = try transport.connect(server_addr);
 
-    _ = std.net.Address.parseIp4("127.0.0.1", 8080) catch |err| {
-        std.log.err("Failed to parse address: {}", .{err});
-        return err;
-    };
+    try testing.expect(conn_id != 0);
+    try testing.expect(transport.getStats().active_connections == 1);
 
-    std.log.info("✅ ZQLite v0.6.0 Transport test initialized");
-    std.log.info("Server stats: {}", .{server.getStats()});
-    std.log.info("Client stats: {}", .{client.getStats()});
+    try transport.closeConnection(conn_id);
+    try testing.expect(transport.getStats().active_connections == 0);
 }

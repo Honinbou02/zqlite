@@ -88,7 +88,7 @@ pub const HashVerifier = struct {
         
         // Register known good hashes for ZQLite dependencies
         try verifier.registerKnownHash("tokioz", "TokioZ-0.0.0-DgtPReljAgAuGaoLtQCm_E-UA_7j_TAGQ8kkV-mtjz4V");
-        try verifier.registerKnownHash("shroud", "122070b3c10a2bd82405cf1bef779789685bce2cb71dd95bfbc540b92d23f57bfd7b");
+        try verifier.registerKnownHash("zcrypto", "122070b3c10a2bd82405cf1bef779789685bce2cb71dd95bfbc540b92d23f57bfd7b");
         
         return verifier;
     }

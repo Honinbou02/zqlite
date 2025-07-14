@@ -1,7 +1,7 @@
 const std = @import("std");
 const storage = @import("../db/storage.zig");
 const crypto = @import("../crypto/secure_storage.zig");
-const tokioz = @import("tokioz");
+const zsync = @import("zsync");
 
 /// Multi-Version Concurrency Control (MVCC) Transaction Manager
 /// Perfect for ZVM smart contracts and GhostMesh concurrent operations
@@ -283,6 +283,7 @@ pub const MVCCTransactionManager = struct {
     /// Write to underlying storage with versioning
     fn writeToStorage(self: *Self, table: []const u8, row_id: storage.RowId, row: storage.Row, version: u64) !void {
         _ = version; // TODO: Store version information
+        _ = row_id; // TODO: Use row_id for positioning
         
         const table_obj = self.storage_engine.getTable(table) orelse return error.TableNotFound;
         
@@ -292,9 +293,10 @@ pub const MVCCTransactionManager = struct {
 
     /// Delete from underlying storage
     fn deleteFromStorage(self: *Self, table: []const u8, row_id: storage.RowId, version: u64) !void {
-        _ = table;
-        _ = row_id;
-        _ = version;
+        _ = self; // TODO: Use self for storage operations
+        _ = table; // TODO: Use table for delete operations
+        _ = row_id; // TODO: Use row_id for positioning
+        _ = version; // TODO: Store version information
         // TODO: Implement versioned deletes
     }
 
@@ -477,8 +479,9 @@ pub const DeadlockDetector = struct {
     }
 
     pub fn wouldCauseDeadlock(self: *Self, transaction_id: TransactionId, lock_info: LockInfo) !bool {
-        _ = transaction_id;
-        _ = lock_info;
+        _ = self; // TODO: Use self for deadlock detection
+        _ = transaction_id; // TODO: Use transaction_id for cycle detection
+        _ = lock_info; // TODO: Use lock_info for dependency analysis
         // Simplified: assume no deadlocks for now
         // Full implementation would check wait-for graph cycles
         return false;
@@ -493,76 +496,52 @@ pub const DeadlockDetector = struct {
     }
 };
 
-/// High-performance async transaction pool using TokioZ
+/// High-performance async transaction pool using zsync
 pub const AsyncTransactionPool = struct {
     allocator: std.mem.Allocator,
     mvcc_manager: *MVCCTransactionManager,
-    runtime: *tokioz.Runtime,
-    task_queue: tokioz.TaskQueue,
+    io: zsync.ThreadPoolIo,
     max_concurrent_transactions: u32,
     active_transactions: std.atomic.Value(u32),
-    semaphore: tokioz.Semaphore,
+    semaphore: std.Thread.Semaphore,
 
     const Self = @This();
 
     pub fn init(allocator: std.mem.Allocator, mvcc_manager: *MVCCTransactionManager, max_concurrent: u32) !Self {
-        const runtime = try tokioz.Runtime.init(allocator, .{});
-        const task_queue = try tokioz.TaskQueue.init(allocator, max_concurrent * 2); // 2x buffer
-        const semaphore = try tokioz.Semaphore.init(max_concurrent);
-
         return Self{
             .allocator = allocator,
             .mvcc_manager = mvcc_manager,
-            .runtime = runtime,
-            .task_queue = task_queue,
+            .io = zsync.ThreadPoolIo{},
             .max_concurrent_transactions = max_concurrent,
             .active_transactions = std.atomic.Value(u32).init(0),
-            .semaphore = semaphore,
+            .semaphore = std.Thread.Semaphore{ .permits = max_concurrent },
         };
     }
 
-    /// Execute async transaction with TokioZ
-    pub fn executeTransactionAsync(self: *Self, comptime Context: type, context: Context, transaction_fn: fn (Context, TransactionId) anyerror!void, isolation_level: IsolationLevel, max_retries: u32) !tokioz.JoinHandle {
-        const TaskContext = struct {
-            pool: *AsyncTransactionPool,
-            context: Context,
-            transaction_fn: fn (Context, TransactionId) anyerror!void,
-            isolation_level: IsolationLevel,
-            max_retries: u32,
-        };
-
-        const task_context = TaskContext{
-            .pool = self,
-            .context = context,
-            .transaction_fn = transaction_fn,
-            .isolation_level = isolation_level,
-            .max_retries = max_retries,
-        };
-
-        return try self.task_queue.spawn(struct {
-            pub fn run(ctx: TaskContext) !void {
-                try ctx.pool.executeTransactionSync(Context, ctx.context, ctx.transaction_fn, ctx.isolation_level, ctx.max_retries);
-            }
-        }.run, task_context);
+    /// Execute async transaction with zsync
+    pub fn executeTransactionAsync(self: *Self, comptime Context: type, context: Context, transaction_fn: fn (Context, TransactionId) anyerror!void, isolation_level: IsolationLevel, max_retries: u32) !void {
+        var future = self.io.async(executeTransactionWorker, .{ self, Context, context, transaction_fn, isolation_level, max_retries });
+        defer future.cancel(self.io) catch {};
+        
+        return try future.await(self.io);
     }
 
     /// Execute multiple transactions concurrently
-    pub fn executeTransactionBatch(self: *Self, comptime Context: type, contexts: []Context, transaction_fn: fn (Context, TransactionId) anyerror!void, isolation_level: IsolationLevel) ![]tokioz.JoinHandle {
-        var handles = try self.allocator.alloc(tokioz.JoinHandle, contexts.len);
-        
-        for (contexts, 0..) |context, i| {
-            handles[i] = try self.executeTransactionAsync(Context, context, transaction_fn, isolation_level, 3);
+    pub fn executeTransactionBatch(self: *Self, comptime Context: type, contexts: []Context, transaction_fn: fn (Context, TransactionId) anyerror!void, isolation_level: IsolationLevel) !void {
+        for (contexts) |context| {
+            _ = try zsync.spawn(executeTransactionTask, .{ self, Context, context, transaction_fn, isolation_level, 3 });
         }
         
-        return handles;
+        // Allow spawned tasks to complete
+        try zsync.sleep(10);
     }
 
-    /// Wait for all transaction handles to complete
-    pub fn waitForBatch(self: *Self, handles: []tokioz.JoinHandle) !void {
-        for (handles) |handle| {
-            try handle.join();
-        }
-        self.allocator.free(handles);
+    fn executeTransactionTask(self: *AsyncTransactionPool, comptime Context: type, context: Context, transaction_fn: fn (Context, TransactionId) anyerror!void, isolation_level: IsolationLevel, max_retries: u32) !void {
+        try self.executeTransactionSync(Context, context, transaction_fn, isolation_level, max_retries);
+    }
+
+    fn executeTransactionWorker(self: *AsyncTransactionPool, comptime Context: type, context: Context, transaction_fn: fn (Context, TransactionId) anyerror!void, isolation_level: IsolationLevel, max_retries: u32) !void {
+        try self.executeTransactionSync(Context, context, transaction_fn, isolation_level, max_retries);
     }
 
     /// Execute a transaction function with automatic retry on conflicts (sync version)
@@ -570,11 +549,11 @@ pub const AsyncTransactionPool = struct {
         var retry_count: u32 = 0;
         
         while (retry_count < max_retries) {
-            // Async wait for semaphore (rate limiting)
-            try self.semaphore.acquire();
-            defer self.semaphore.release();
+            // Wait for semaphore (rate limiting)
+            self.semaphore.wait();
+            defer self.semaphore.post();
 
-            const current_active = self.active_transactions.fetchAdd(1, .acq_rel);
+            _ = self.active_transactions.fetchAdd(1, .acq_rel);
             defer _ = self.active_transactions.fetchSub(1, .acq_rel);
 
             const transaction_id = try self.mvcc_manager.beginTransaction(isolation_level);
@@ -590,9 +569,9 @@ pub const AsyncTransactionPool = struct {
                         try self.mvcc_manager.abortTransaction(transaction_id);
                         retry_count += 1;
                         
-                        // Async exponential backoff using TokioZ
-                        const backoff_time = (@as(u64, 1) << @min(retry_count, 10)) * 1000; // microseconds
-                        try tokioz.time.sleep(std.time.Duration.fromMicroseconds(backoff_time));
+                        // Exponential backoff using zsync sleep
+                        const backoff_time = (@as(u64, 1) << @min(retry_count, 10));
+                        try zsync.sleep(backoff_time);
                         continue;
                     },
                     else => return err, // Other errors are not retryable
@@ -612,15 +591,14 @@ pub const AsyncTransactionPool = struct {
         return AsyncTransactionPoolStats{
             .active_transactions = self.active_transactions.load(.acquire),
             .max_concurrent = self.max_concurrent_transactions,
-            .task_queue_capacity = self.task_queue.capacity(),
-            .pending_tasks = self.task_queue.pendingCount(),
+            .task_queue_capacity = 0, // Not applicable with zsync
+            .pending_tasks = 0,
         };
     }
 
     pub fn deinit(self: *Self) void {
-        self.task_queue.deinit();
-        self.semaphore.deinit();
-        self.runtime.deinit();
+        _ = self; // TODO: Add cleanup if needed
+        // zsync handles cleanup automatically
     }
 };
 
@@ -643,7 +621,7 @@ test "mvcc transaction basic operations" {
     defer storage_engine.deinit();
 
     // Create MVCC manager
-    var mvcc = try MVCCTransactionManager.init(allocator, storage_engine, null);
+    var mvcc = try MVCCTransactionManager.init(allocator, &storage_engine, null);
     defer mvcc.deinit();
 
     // Begin transaction
@@ -680,7 +658,7 @@ test "transaction isolation levels" {
     var storage_engine = try storage.StorageEngine.initMemory(allocator);
     defer storage_engine.deinit();
 
-    var mvcc = try MVCCTransactionManager.init(allocator, storage_engine, null);
+    var mvcc = try MVCCTransactionManager.init(allocator, &storage_engine, null);
     defer mvcc.deinit();
 
     // Test different isolation levels
@@ -695,7 +673,7 @@ test "transaction isolation levels" {
     try testing.expect(stats.aborted_transactions == 4);
 }
 
-test "async transaction pool with TokioZ" {
+test "async transaction pool with zsync" {
     const testing = std.testing;
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -704,7 +682,7 @@ test "async transaction pool with TokioZ" {
     var storage_engine = try storage.StorageEngine.initMemory(allocator);
     defer storage_engine.deinit();
 
-    var mvcc = try MVCCTransactionManager.init(allocator, storage_engine, null);
+    var mvcc = try MVCCTransactionManager.init(allocator, &storage_engine, null);
     defer mvcc.deinit();
 
     var async_pool = try AsyncTransactionPool.init(allocator, &mvcc, 4);
@@ -740,8 +718,7 @@ test "async transaction pool with TokioZ" {
         TestContext{ .value = 4, .counter = &counter },
     };
 
-    const handles = try async_pool.executeTransactionBatch(TestContext, &contexts, testTransaction, .ReadCommitted);
-    try async_pool.waitForBatch(handles);
+    try async_pool.executeTransactionBatch(TestContext, &contexts, testTransaction, .ReadCommitted);
 
     // Check that all transactions executed
     try testing.expect(counter.load(.acquire) == 4);

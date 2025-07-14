@@ -91,6 +91,10 @@ pub const Tokenizer = struct {
                     self.advance();
                     return Token{ .Asterisk = {} };
                 },
+                '?' => {
+                    self.advance();
+                    return Token{ .QuestionMark = {} };
+                },
                 else => {
                     return error.UnexpectedCharacter;
                 },
@@ -223,6 +227,7 @@ pub const Token = union(enum) {
     Exists,
     Limit,
     Offset,
+    Default,
 
     // Operators
     Equal,
@@ -238,6 +243,7 @@ pub const Token = union(enum) {
     Comma,
     Semicolon,
     Asterisk,
+    QuestionMark,
 
     // Special
     EOF,
@@ -308,6 +314,8 @@ fn getKeyword(identifier: []const u8) ?Token {
         .{ "limit", .Limit },
         .{ "OFFSET", .Offset },
         .{ "offset", .Offset },
+        .{ "DEFAULT", .Default },
+        .{ "default", .Default },
     });
 
     return keyword_map.get(identifier);

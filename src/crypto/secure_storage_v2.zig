@@ -45,7 +45,7 @@ pub const CryptoEngine = struct {
     pub fn deriveMasterKey(self: *Self, password: []const u8, salt: ?[]const u8) !void {
         var key: [32]u8 = undefined;
         var actual_salt: [32]u8 = undefined;
-        
+
         if (salt) |s| {
             if (s.len >= 32) {
                 @memcpy(actual_salt[0..32], s[0..32]);
@@ -60,7 +60,7 @@ pub const CryptoEngine = struct {
 
         const info = "ZQLite v0.6.0 Master Key";
         try self.crypto.hkdf(password, &actual_salt, info, &key);
-        
+
         self.master_key = key;
     }
 
@@ -74,7 +74,7 @@ pub const CryptoEngine = struct {
                 std.log.err("Failed to generate Ed25519 keypair: {}", .{err});
                 return err;
             };
-            
+
             return KeyPair{
                 .public_key = keypair.public_key.bytes,
                 .secret_key = keypair.secret_key.bytes,
@@ -90,15 +90,9 @@ pub const CryptoEngine = struct {
 
         var nonce: [12]u8 = undefined;
         var tag: [16]u8 = undefined;
-        
+
         try self.crypto.randomBytes(&nonce);
-        try self.crypto.encrypt(
-            self.master_key.?,
-            nonce,
-            plaintext,
-            output[0..plaintext.len],
-            &tag
-        );
+        try self.crypto.encrypt(self.master_key.?, nonce, plaintext, output[0..plaintext.len], &tag);
 
         return EncryptedData{
             .ciphertext_len = plaintext.len,
@@ -113,13 +107,7 @@ pub const CryptoEngine = struct {
         if (output.len < encrypted.ciphertext_len) return error.OutputTooSmall;
         if (ciphertext.len < encrypted.ciphertext_len) return error.InvalidCiphertext;
 
-        try self.crypto.decrypt(
-            self.master_key.?,
-            encrypted.nonce,
-            ciphertext[0..encrypted.ciphertext_len],
-            encrypted.tag,
-            output[0..encrypted.ciphertext_len]
-        );
+        try self.crypto.decrypt(self.master_key.?, encrypted.nonce, ciphertext[0..encrypted.ciphertext_len], encrypted.tag, output[0..encrypted.ciphertext_len]);
     }
 
     /// Hash data for integrity verification
@@ -155,7 +143,7 @@ pub const KeyPair = struct {
     public_key: [32]u8,
     secret_key: [64]u8, // Ed25519 secret key is 64 bytes
     is_hybrid: bool,
-    
+
     pub fn deinit(self: *KeyPair) void {
         @memset(&self.secret_key, 0); // Secure cleanup
     }

@@ -19,7 +19,7 @@ pub fn main() !void {
 
     if (args.len <= 1) {
         // No arguments, start interactive shell
-        try cli.runShell(allocator);
+        try cli.runShell();
     } else {
         // Process command line arguments
         try cli.executeCommand(allocator, const_args);
@@ -76,7 +76,9 @@ test "end-to-end workflow" {
     defer stmt.deinit();
 
     try stmt.bindParameter(0, zqlite.storage.Value{ .Integer = 3 });
-    try stmt.bindParameter(1, zqlite.storage.Value{ .Text = try allocator.dupe(u8, "Keyboard") });
+    const keyboard_text = try allocator.dupe(u8, "Keyboard");
+    defer allocator.free(keyboard_text);
+    try stmt.bindParameter(1, zqlite.storage.Value{ .Text = keyboard_text });
     try stmt.bindParameter(2, zqlite.storage.Value{ .Real = 79.99 });
 
     var result = try stmt.execute(conn);
