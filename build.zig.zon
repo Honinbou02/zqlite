@@ -7,7 +7,7 @@
         // Crypto + QUIC and Major Network operations library (includes zsync)
         .shroud = .{
             .url = "https://github.com/ghostkellz/shroud/archive/refs/heads/main.tar.gz",
-            .hash = "shroud-1.0.1-z7C8mahctAPpLPuaNG8k4vMfxAoAMCgaa770VRz4FOOP",
+            .hash = "shroud-1.0.1-z7C8mahctAPn_oGHmGnyNbRFgD5HpE0yiU_7EgFiuUJP",
         },
     },
 
