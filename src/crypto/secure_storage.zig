@@ -1,7 +1,6 @@
 const std = @import("std");
 const crypto_interface = @import("interface.zig");
 const storage = @import("../db/storage.zig");
-const shroud = @import("shroud");
 
 /// 🚀 ZQLite v1.0.0 Crypto Engine - Production-ready database encryption
 /// Features: ZCrypto integration, Modular crypto backends, Native Zig crypto fallback
@@ -49,20 +48,14 @@ pub const CryptoEngine = struct {
         self.* = undefined;
     }
 
-    /// Hash password for storage using ZCrypto/Argon2
+    /// Hash password for storage using Argon2
     pub fn hashPassword(self: *Self, password: []const u8) ![]u8 {
         const result = try self.allocator.alloc(u8, 64);
 
-        // Try Shroud first, fallback to std.crypto
-        if (@hasDecl(shroud, "ghostcipher") and @hasDecl(shroud.ghostcipher, "argon2")) {
-            // Use Shroud implementation
-            try shroud.ghostcipher.argon2.hash_password(result, password, "ZQLiteV1", .{});
-        } else {
-            // Fallback to std.crypto
-            const salt = "ZQLiteV1Salt";
-            try std.crypto.pwhash.argon2.kdf(self.allocator, result, password, salt, .{ .t = 3, .m = 12, .p = 1 }, // Time cost 3, Memory cost 4096, Parallelism 1
-                .argon2id);
-        }
+        // Use std.crypto Argon2
+        const salt = "ZQLiteV1Salt";
+        try std.crypto.pwhash.argon2.kdf(self.allocator, result, password, salt, .{ .t = 3, .m = 12, .p = 1 }, // Time cost 3, Memory cost 4096, Parallelism 1
+            .argon2id);
 
         return result;
     }
@@ -110,27 +103,24 @@ pub const CryptoEngine = struct {
         self.master_key = key;
     }
 
-    /// Generate secure keypair (classical or hybrid)
+    /// Generate secure keypair (classical Ed25519)
     pub fn generateKeyPair(self: *Self) !KeyPair {
-        if (self.crypto.hasPQCrypto() and self.hybrid_mode) {
-            return error.PostQuantumNotImplemented; // TODO: Implement with Shroud
-        } else {
-            // Use native Ed25519 for classical crypto
-            var seed: [64]u8 = undefined;
-            std.crypto.random.bytes(&seed);
-            const secret_key = std.crypto.sign.Ed25519.SecretKey{ .bytes = seed };
-            const keypair = try std.crypto.sign.Ed25519.KeyPair.fromSecretKey(secret_key);
+        _ = self;
+        // Use native Ed25519 for classical crypto
+        var seed: [64]u8 = undefined;
+        std.crypto.random.bytes(&seed);
+        const secret_key = std.crypto.sign.Ed25519.SecretKey{ .bytes = seed };
+        const keypair = try std.crypto.sign.Ed25519.KeyPair.fromSecretKey(secret_key);
 
-            return KeyPair{
+        return KeyPair{
+            .public_key = keypair.public_key.bytes,
+            .secret_key = keypair.secret_key.bytes,
+            .is_hybrid = false,
+            .classical = .{
                 .public_key = keypair.public_key.bytes,
                 .secret_key = keypair.secret_key.bytes,
-                .is_hybrid = false,
-                .classical = .{
-                    .public_key = keypair.public_key.bytes,
-                    .secret_key = keypair.secret_key.bytes,
-                },
-            };
-        }
+            },
+        };
     }
 
     /// Encrypt data with master key

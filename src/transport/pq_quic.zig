@@ -1,5 +1,4 @@
 const std = @import("std");
-const shroud = @import("shroud");
 
 /// 🌐 ZQLite Post-Quantum QUIC Transport
 /// World's first database with post-quantum QUIC support
@@ -72,15 +71,24 @@ pub const PQQuicTransport = struct {
         /// Derive packet keys from secret
         fn derivePacketKeys(self: *QuicCrypto, secret: [32]u8) !PacketKeys {
             _ = self;
-            const aead_key = try shroud.kdf.hkdfSha256(&secret, "", "quic key", 32);
-
-            const iv = try shroud.kdf.hkdfSha256(&secret, "", "quic iv", 12);
-
-            const hp_key = try shroud.kdf.hkdfSha256(&secret, "", "quic hp", 32);
+            
+            // Use std.crypto HKDF for key derivation
+            const Hkdf = std.crypto.kdf.hkdf.HkdfSha256;
+            const salt = "";
+            const prk = Hkdf.extract(salt, &secret);
+            
+            var aead_key: [32]u8 = undefined;
+            Hkdf.expand(&aead_key, "quic key", prk);
+            
+            var iv_buf: [12]u8 = undefined;
+            Hkdf.expand(&iv_buf, "quic iv", prk);
+            
+            var hp_key: [32]u8 = undefined;
+            Hkdf.expand(&hp_key, "quic hp", prk);
 
             return PacketKeys{
                 .aead_key = aead_key,
-                .iv = iv[0..12].*,
+                .iv = iv_buf,
                 .header_protection_key = hp_key,
             };
         }
@@ -109,14 +117,19 @@ pub const PQQuicTransport = struct {
 
             switch (self.cipher_suite) {
                 .TLS_AES_256_GCM_SHA384 => {
-                    try shroud.sym.aes256_gcm_encrypt(payload, &keys.aead_key, &nonce, output[header.len .. header.len + payload.len], &tag);
+                    // Use std.crypto AES-GCM
+                    const aes_gcm = std.crypto.aead.aes_gcm.Aes256Gcm;
+                    aes_gcm.encrypt(output[header.len .. header.len + payload.len], &tag, payload, &[0]u8{}, nonce, keys.aead_key);
                 },
                 .TLS_CHACHA20_POLY1305_SHA256 => {
-                    try shroud.sym.chacha20_poly1305_encrypt(payload, &keys.aead_key, &nonce, output[header.len .. header.len + payload.len], &tag);
+                    // Use std.crypto ChaCha20-Poly1305
+                    const chacha = std.crypto.aead.chacha_poly.ChaCha20Poly1305;
+                    chacha.encrypt(output[header.len .. header.len + payload.len], &tag, payload, &[0]u8{}, nonce, keys.aead_key);
                 },
                 .TLS_ML_KEM_768_X25519_AES256_GCM_SHA384 => {
-                    // Post-quantum enhanced encryption
-                    try shroud.sym.aes256_gcm_encrypt(payload, &keys.aead_key, &nonce, output[header.len .. header.len + payload.len], &tag);
+                    // Post-quantum enhanced encryption (using AES-GCM for now)
+                    const aes_gcm = std.crypto.aead.aes_gcm.Aes256Gcm;
+                    aes_gcm.encrypt(output[header.len .. header.len + payload.len], &tag, payload, &[0]u8{}, nonce, keys.aead_key);
                 },
             }
 
@@ -150,14 +163,19 @@ pub const PQQuicTransport = struct {
             // Decrypt payload
             switch (self.cipher_suite) {
                 .TLS_AES_256_GCM_SHA384 => {
-                    try shroud.sym.aes256_gcm_decrypt(ciphertext[0..payload_len], &keys.aead_key, &nonce, &tag, output[0..payload_len]);
+                    // Use std.crypto AES-GCM
+                    const aes_gcm = std.crypto.aead.aes_gcm.Aes256Gcm;
+                    try aes_gcm.decrypt(output[0..payload_len], ciphertext[0..payload_len], &[0]u8{}, tag, nonce, keys.aead_key);
                 },
                 .TLS_CHACHA20_POLY1305_SHA256 => {
-                    try shroud.sym.chacha20_poly1305_decrypt(ciphertext[0..payload_len], &keys.aead_key, &nonce, &tag, output[0..payload_len]);
+                    // Use std.crypto ChaCha20-Poly1305
+                    const chacha = std.crypto.aead.chacha_poly.ChaCha20Poly1305;
+                    try chacha.decrypt(output[0..payload_len], ciphertext[0..payload_len], &[0]u8{}, tag, nonce, keys.aead_key);
                 },
                 .TLS_ML_KEM_768_X25519_AES256_GCM_SHA384 => {
-                    // Post-quantum enhanced decryption
-                    try shroud.sym.aes256_gcm_decrypt(ciphertext[0..payload_len], &keys.aead_key, &nonce, &tag, output[0..payload_len]);
+                    // Post-quantum enhanced decryption (using AES-GCM for now)
+                    const aes_gcm = std.crypto.aead.aes_gcm.Aes256Gcm;
+                    try aes_gcm.decrypt(output[0..payload_len], ciphertext[0..payload_len], &[0]u8{}, tag, nonce, keys.aead_key);
                 },
             }
 
@@ -234,22 +252,23 @@ pub const PQQuicTransport = struct {
 
         /// Perform post-quantum key exchange
         pub fn performPQKeyExchange(self: *PQConnection) !void {
-            // Generate hybrid key share
+            // Generate hybrid key share using std.crypto
             var classical_share: [32]u8 = undefined;
-            var pq_share: [1184]u8 = undefined; // ML-KEM-768 public key
-            const entropy = shroud.rand.generateKey(64);
-
-            try shroud.quic.PostQuantumQuic.generateHybridKeyShare(&classical_share, &pq_share, &entropy);
+            var pq_share: [1184]u8 = undefined; // ML-KEM-768 public key placeholder
+            std.crypto.random.bytes(&classical_share);
+            std.crypto.random.bytes(&pq_share);
 
             // In a real implementation, this would be sent to the peer
             // and we'd receive their response
 
-            // For demonstration, simulate peer response
+            // For demonstration, simulate peer response using std.crypto
             var peer_classical: [32]u8 = undefined;
-            var peer_pq: [1088]u8 = undefined; // ML-KEM-768 ciphertext
+            var peer_pq: [1088]u8 = undefined; // ML-KEM-768 ciphertext placeholder
             var shared_secret: [64]u8 = undefined;
-
-            try shroud.quic.PostQuantumQuic.processHybridKeyShare(&classical_share, &pq_share, &peer_classical, &peer_pq, &shared_secret);
+            
+            std.crypto.random.bytes(&peer_classical);
+            std.crypto.random.bytes(&peer_pq);
+            std.crypto.random.bytes(&shared_secret);
 
             self.pq_keys = PQKeys{
                 .classical_shared = peer_classical,
@@ -325,9 +344,10 @@ pub const PQQuicTransport = struct {
 
         pub fn deinit(self: *PQConnection, allocator: std.mem.Allocator) void {
             if (self.pq_keys) |*keys| {
-                shroud.util.secureZero(&keys.classical_shared);
-                shroud.util.secureZero(&keys.pq_shared);
-                shroud.util.secureZero(&keys.combined_secret);
+                // Secure zero using std.crypto
+                std.crypto.utils.secureZero(u8, &keys.classical_shared);
+                std.crypto.utils.secureZero(u8, &keys.pq_shared);
+                std.crypto.utils.secureZero(u8, &keys.combined_secret);
             }
             allocator.destroy(self);
         }
@@ -420,10 +440,14 @@ pub const PQQuicTransport = struct {
         for (self.connections.items) |connection| {
             if (connection.id == conn_id) {
                 if (connection.pq_keys) |*keys| {
-                    // Generate new entropy for key update
-                    const pq_entropy = shroud.rand.generateKey(64);
+                    // Generate new entropy for key update using std.crypto
+                    var pq_entropy: [64]u8 = undefined;
+                    std.crypto.random.bytes(&pq_entropy);
 
-                    try shroud.quic.PostQuantumQuic.performPQKeyUpdate(&keys.combined_secret, &pq_entropy, &keys.combined_secret);
+                    // Simple key update using XOR with new entropy
+                    for (&keys.combined_secret, pq_entropy) |*secret_byte, entropy_byte| {
+                        secret_byte.* ^= entropy_byte;
+                    }
 
                     // Update packet keys
                     const conn_id_bytes = std.mem.asBytes(&conn_id);
@@ -451,13 +475,27 @@ pub const PQQuicTransport = struct {
     /// Enable zero-RTT for fast connection establishment
     pub fn enableZeroRTT(self: *Self, psk: []const u8) !void {
         _ = self;
+        if (psk.len < 64) return error.InvalidPSKLength;
+        
         // Generate quantum-safe 0-RTT keys
         const classical_psk = psk[0..32];
         const pq_psk = psk[32..64];
 
-        // Protect 0-RTT data with post-quantum crypto
-        try shroud.quic.PostQuantumQuic.protectZeroRTTPQ(classical_psk, pq_psk, "0rtt_data", undefined // would be actual buffer
-        );
+        // Protect 0-RTT data with post-quantum crypto (stub implementation)
+        var combined_key: [64]u8 = undefined;
+        @memcpy(combined_key[0..32], classical_psk);
+        @memcpy(combined_key[32..64], pq_psk);
+        
+        // Hash the combined key for 0-RTT protection
+        var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+        hasher.update(&combined_key);
+        hasher.update("0rtt_data");
+        var protection_key: [32]u8 = undefined;
+        hasher.final(&protection_key);
+        
+        // Store protection key for later use (stub implementation)
+        // In a real implementation, this would be used to protect 0-RTT data
+        std.crypto.utils.secureZero(u8, &protection_key);
     }
 
     pub fn deinit(self: *Self) void {

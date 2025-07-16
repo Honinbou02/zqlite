@@ -172,7 +172,7 @@ pub const ZNSAdapter = struct {
     fn deriveDomainKey(self: Self, domain: []const u8) ![32]u8 {
         const info = "zns_domain_encryption_key";
         var key: [32]u8 = undefined;
-        try self.crypto.hkdf(self.allocator, domain, &self.domain_salt, info, &key);
+        try self.crypto.hkdf(domain, &self.domain_salt, info, &key);
         return key;
     }
     

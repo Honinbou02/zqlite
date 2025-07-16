@@ -1,6 +1,5 @@
 const std = @import("std");
-const shroud = @import("shroud");
-const zsync = shroud.zsync;
+const zsync = @import("zsync");
 const storage = @import("../db/storage.zig");
 const connection = @import("../db/connection.zig");
 

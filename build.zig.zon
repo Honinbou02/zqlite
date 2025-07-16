@@ -1,13 +1,12 @@
 .{
     .name = .zqlite,
-    .version = "1.1.0",
+    .version = "1.2.0",
     .fingerprint = 0x9fb4d74ae26e27d0,
 
     .dependencies = .{
-        // Crypto + QUIC and Major Network operations library (includes zsync)
-        .shroud = .{
-            .url = "https://github.com/ghostkellz/shroud/archive/refs/heads/main.tar.gz",
-            .hash = "shroud-1.0.1-z7C8mahctAPn_oGHmGnyNbRFgD5HpE0yiU_7EgFiuUJP",
+        .zsync = .{
+            .url = "https://github.com/ghostkellz/zsync/archive/main.tar.gz",
+            .hash = "zsync-0.3.2-KAuhed0XGADaOKjYNl34Ragvca2zBYqvoAsBV-AhkoLS",
         },
     },
 

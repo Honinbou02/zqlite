@@ -4,13 +4,13 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     
-    // Add Shroud dependency (includes zsync)
-    const shroud = b.dependency("shroud", .{
+    // Add zsync dependency for async operations
+    const zsync = b.dependency("zsync", .{
         .target = target,
         .optimize = optimize,
     });
     
-    // Create the zqlite library
+    // Create the zqlite library - now with only zsync dependency!
     const lib = b.addStaticLibrary(.{
         .name = "zqlite",
         .root_source_file = b.path("src/zqlite.zig"),
@@ -18,8 +18,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // Add dependencies to library
-    lib.root_module.addImport("shroud", shroud.module("shroud"));
+    // Add zsync dependency to library
+    lib.root_module.addImport("zsync", zsync.module("zsync"));
 
     // Install the library
     b.installArtifact(lib);
@@ -31,8 +31,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     
-    // Add dependencies to exported module
-    zqlite_module.addImport("shroud", shroud.module("shroud"));
+    // Add zsync dependency to exported module
+    zqlite_module.addImport("zsync", zsync.module("zsync"));
 
     // Create the zqlite executable
     const exe = b.addExecutable(.{
@@ -42,9 +42,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // Link the library to the executable and add dependencies
+    // Link the library to the executable
     exe.root_module.addImport("zqlite", lib.root_module);
-    exe.root_module.addImport("shroud", shroud.module("shroud"));
+    exe.root_module.addImport("zsync", zsync.module("zsync"));
 
     // Install the executable
     b.installArtifact(exe);
@@ -66,8 +66,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     
-    // Add dependencies to tests
-    lib_unit_tests.root_module.addImport("shroud", shroud.module("shroud"));
+    // Add zsync dependency to tests
+    lib_unit_tests.root_module.addImport("zsync", zsync.module("zsync"));
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
@@ -78,7 +78,7 @@ pub fn build(b: *std.Build) void {
     });
 
     exe_unit_tests.root_module.addImport("zqlite", lib.root_module);
-    exe_unit_tests.root_module.addImport("shroud", shroud.module("shroud"));
+    exe_unit_tests.root_module.addImport("zsync", zsync.module("zsync"));
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
@@ -87,11 +87,11 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_exe_unit_tests.step);
 
     // Basic examples that work without external dependencies
-    createBasicExample(b, "powerdns_example", lib, target, optimize, shroud);
-    createBasicExample(b, "cipher_dns", lib, target, optimize, shroud);
+    createBasicExample(b, "powerdns_example", lib, target, optimize, zsync);
+    createBasicExample(b, "cipher_dns", lib, target, optimize, zsync);
 }
 
-fn createBasicExample(b: *std.Build, name: []const u8, lib: *std.Build.Step.Compile, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, shroud: *std.Build.Dependency) void {
+fn createBasicExample(b: *std.Build, name: []const u8, lib: *std.Build.Step.Compile, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, zsync: *std.Build.Dependency) void {
     
     const example = b.addExecutable(.{
         .name = name,
@@ -101,6 +101,6 @@ fn createBasicExample(b: *std.Build, name: []const u8, lib: *std.Build.Step.Comp
     });
 
     example.root_module.addImport("zqlite", lib.root_module);
-    example.root_module.addImport("shroud", shroud.module("shroud"));
+    example.root_module.addImport("zsync", zsync.module("zsync"));
     b.installArtifact(example);
 }

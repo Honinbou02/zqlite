@@ -1,5 +1,4 @@
 const std = @import("std");
-const shroud = @import("shroud");
 
 /// Production-ready crypto engine for secure storage operations
 pub const CryptoEngine = struct {
@@ -11,7 +10,7 @@ pub const CryptoEngine = struct {
 
     pub fn init(allocator: std.mem.Allocator) !Self {
         var key: [32]u8 = undefined;
-        try shroud.ghostcipher.generateBytes(&key);
+        std.crypto.random.bytes(&key);
         
         return Self{
             .allocator = allocator,
@@ -41,7 +40,7 @@ pub const CryptoEngine = struct {
         const nonce_val = self.nonce_counter.fetchAdd(1, .acq_rel);
         var nonce: [12]u8 = undefined;
         std.mem.writeInt(u64, nonce[0..8], nonce_val, .little);
-        try shroud.ghostcipher.generateBytes(nonce[8..]);
+        std.crypto.random.bytes(nonce[8..]);
         
         // Copy nonce to output
         @memcpy(encrypted[0..12], &nonce);

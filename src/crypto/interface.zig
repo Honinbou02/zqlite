@@ -36,8 +36,8 @@ pub const CryptoInterface = struct {
                 std.crypto.random.bytes(buffer);
             },
             .shroud => {
-                // TODO: Use Shroud when available
-                return error.ShroudNotAvailable;
+                // Fallback to native
+                std.crypto.random.bytes(buffer);
             },
             .none => {
                 @memset(buffer, 0); // Insecure fallback
@@ -54,8 +54,10 @@ pub const CryptoInterface = struct {
                 hasher.final(output);
             },
             .shroud => {
-                // TODO: Use Shroud when available
-                return error.ShroudNotAvailable;
+                // Fallback to native
+                var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+                hasher.update(data);
+                hasher.final(output);
             },
             .none => {
                 @memset(output, 0); // Insecure fallback
@@ -72,8 +74,10 @@ pub const CryptoInterface = struct {
                 Hkdf.expand(output, info, prk);
             },
             .shroud => {
-                // TODO: Use Shroud when available
-                return error.ShroudNotAvailable;
+                // Fallback to native
+                const Hkdf = std.crypto.kdf.hkdf.HkdfSha256;
+                const prk = Hkdf.extract(salt, ikm);
+                Hkdf.expand(output, info, prk);
             },
             .none => {
                 @memset(output, 0); // Insecure fallback
@@ -91,8 +95,9 @@ pub const CryptoInterface = struct {
                 cipher.encrypt(ciphertext, tag, plaintext, &[0]u8{}, nonce, key);
             },
             .shroud => {
-                // TODO: Use Shroud when available
-                return error.ShroudNotAvailable;
+                // Fallback to native
+                const cipher = std.crypto.aead.chacha_poly.ChaCha20Poly1305;
+                cipher.encrypt(ciphertext, tag, plaintext, &[0]u8{}, nonce, key);
             },
             .none => {
                 @memcpy(ciphertext, plaintext); // No encryption
@@ -111,8 +116,9 @@ pub const CryptoInterface = struct {
                 try cipher.decrypt(plaintext, ciphertext, &[0]u8{}, tag, nonce, key);
             },
             .shroud => {
-                // TODO: Use Shroud when available
-                return error.ShroudNotAvailable;
+                // Fallback to native
+                const cipher = std.crypto.aead.chacha_poly.ChaCha20Poly1305;
+                try cipher.decrypt(plaintext, ciphertext, &[0]u8{}, tag, nonce, key);
             },
             .none => {
                 @memcpy(plaintext, ciphertext); // No decryption
@@ -135,22 +141,50 @@ pub const CryptoInterface = struct {
             else => false,
         };
     }
+
+    /// Post-quantum signature verification (using Ed25519 as classical fallback)
+    pub fn verifyPQ(self: Self, message: []const u8, signature: []const u8, public_key: []const u8) !bool {
+        _ = self;
+        
+        // Validate input sizes
+        if (signature.len != 64) return error.InvalidSignatureLength;
+        if (public_key.len != 32) return error.InvalidPublicKeyLength;
+        
+        // Use Ed25519 for classical verification
+        const sig = std.crypto.sign.Ed25519.Signature{ .bytes = signature[0..64].* };
+        const pubkey = std.crypto.sign.Ed25519.PublicKey{ .bytes = public_key[0..32].* };
+        
+        // Verify signature
+        sig.verify(message, pubkey) catch return false;
+        return true;
+    }
+
+    /// Post-quantum signing (using Ed25519 as classical fallback)
+    pub fn signPQ(self: Self, message: []const u8, private_key: []const u8, allocator: std.mem.Allocator) ![]u8 {
+        _ = self;
+        
+        // Validate input size
+        if (private_key.len != 64) return error.InvalidPrivateKeyLength;
+        
+        // Use Ed25519 for classical signing
+        const secret_key = std.crypto.sign.Ed25519.SecretKey{ .bytes = private_key[0..64].* };
+        const signature = try secret_key.sign(message, null);
+        
+        // Return signature as allocated slice
+        const sig_bytes = try allocator.alloc(u8, 64);
+        @memcpy(sig_bytes, &signature.bytes);
+        return sig_bytes;
+    }
 };
 
 /// Feature detection for runtime configuration
 pub fn detectAvailableFeatures() CryptoConfig {
     var config = CryptoConfig{};
 
-    // Check if Shroud is available at compile time
-    if (@hasDecl(@import("root"), "shroud")) {
-        config.backend = .shroud;
-        config.enable_pq = true;
-        config.enable_zkp = true;
-    } else {
-        config.backend = .native;
-        config.enable_pq = false;
-        config.enable_zkp = false;
-    }
+    // Default to native std.crypto backend
+    config.backend = .native;
+    config.enable_pq = false;
+    config.enable_zkp = false;
 
     return config;
 }
