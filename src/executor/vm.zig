@@ -3,12 +3,14 @@ const ast = @import("../parser/ast.zig");
 const planner = @import("planner.zig");
 const storage = @import("../db/storage.zig");
 const db = @import("../db/connection.zig");
+const functions = @import("functions.zig");
 
 /// Virtual machine for executing query plans
 pub const VirtualMachine = struct {
     allocator: std.mem.Allocator,
     connection: *db.Connection,
     parameters: ?[]storage.Value, // Optional parameters for prepared statements
+    function_evaluator: functions.FunctionEvaluator,
 
     const Self = @This();
 
@@ -18,6 +20,7 @@ pub const VirtualMachine = struct {
             .allocator = allocator,
             .connection = connection,
             .parameters = null,
+            .function_evaluator = functions.FunctionEvaluator.init(allocator),
         };
     }
 
@@ -159,6 +162,132 @@ pub const VirtualMachine = struct {
             else => value, // Return the value as-is for non-parameters
         };
     }
+    
+    /// Evaluate a default value, including function calls
+    fn evaluateDefaultValue(self: *Self, default_value: ast.DefaultValue) !storage.Value {
+        return switch (default_value) {
+            .Literal => |literal| {
+                const storage_value = try self.convertAstValueToStorage(literal);
+                return self.resolveValue(storage_value);
+            },
+            .FunctionCall => |function_call| {
+                return self.function_evaluator.evaluateFunction(function_call);
+            },
+        };
+    }
+    
+    /// Convert AST value to storage value
+    fn convertAstValueToStorage(self: *Self, value: ast.Value) !storage.Value {
+        _ = self;
+        return switch (value) {
+            .Integer => |i| storage.Value{ .Integer = i },
+            .Text => |t| storage.Value{ .Text = t },
+            .Real => |r| storage.Value{ .Real = r },
+            .Blob => |b| storage.Value{ .Blob = b },
+            .Null => storage.Value.Null,
+            .Parameter => |param_index| storage.Value{ .Parameter = param_index },
+        };
+    }
+    
+    /// Evaluate a storage default value
+    fn evaluateStorageDefaultValue(self: *Self, default_value: storage.Column.DefaultValue) !storage.Value {
+        return switch (default_value) {
+            .Literal => |literal| {
+                return self.resolveValue(literal);
+            },
+            .FunctionCall => |function_call| {
+                // Convert storage function call to AST function call for evaluation
+                const ast_function_call = try self.convertStorageFunctionToAst(function_call);
+                defer ast_function_call.deinit(self.allocator);
+                
+                return self.function_evaluator.evaluateFunction(ast_function_call);
+            },
+        };
+    }
+    
+    /// Convert storage function call to AST function call
+    fn convertStorageFunctionToAst(self: *Self, function_call: storage.Column.FunctionCall) !ast.FunctionCall {
+        var ast_args = try self.allocator.alloc(ast.FunctionArgument, function_call.arguments.len);
+        for (function_call.arguments, 0..) |arg, i| {
+            ast_args[i] = try self.convertStorageFunctionArgToAst(arg);
+        }
+        
+        return ast.FunctionCall{
+            .name = try self.allocator.dupe(u8, function_call.name),
+            .arguments = ast_args,
+        };
+    }
+    
+    /// Convert storage function argument to AST function argument
+    fn convertStorageFunctionArgToAst(self: *Self, arg: storage.Column.FunctionArgument) !ast.FunctionArgument {
+        return switch (arg) {
+            .Literal => |literal| {
+                const ast_value = try self.convertStorageValueToAst(literal);
+                return ast.FunctionArgument{ .Literal = ast_value };
+            },
+            .Column => |column| {
+                return ast.FunctionArgument{ .Column = try self.allocator.dupe(u8, column) };
+            },
+            .Parameter => |param_index| {
+                return ast.FunctionArgument{ .Parameter = param_index };
+            },
+        };
+    }
+    
+    /// Convert storage value to AST value
+    fn convertStorageValueToAst(self: *Self, value: storage.Value) !ast.Value {
+        return switch (value) {
+            .Integer => |i| ast.Value{ .Integer = i },
+            .Text => |t| ast.Value{ .Text = try self.allocator.dupe(u8, t) },
+            .Real => |r| ast.Value{ .Real = r },
+            .Blob => |b| ast.Value{ .Blob = try self.allocator.dupe(u8, b) },
+            .Null => ast.Value.Null,
+            .Parameter => |param_index| ast.Value{ .Parameter = param_index },
+        };
+    }
+    
+    /// Clone a storage default value
+    fn cloneStorageDefaultValue(self: *Self, default_value: storage.Column.DefaultValue) !storage.Column.DefaultValue {
+        return switch (default_value) {
+            .Literal => |literal| {
+                const cloned_literal = try self.cloneValue(literal);
+                return storage.Column.DefaultValue{ .Literal = cloned_literal };
+            },
+            .FunctionCall => |function_call| {
+                const cloned_function_call = try self.cloneStorageFunctionCall(function_call);
+                return storage.Column.DefaultValue{ .FunctionCall = cloned_function_call };
+            },
+        };
+    }
+    
+    /// Clone a storage function call
+    fn cloneStorageFunctionCall(self: *Self, function_call: storage.Column.FunctionCall) !storage.Column.FunctionCall {
+        var cloned_args = try self.allocator.alloc(storage.Column.FunctionArgument, function_call.arguments.len);
+        for (function_call.arguments, 0..) |arg, i| {
+            cloned_args[i] = try self.cloneStorageFunctionArgument(arg);
+        }
+        
+        return storage.Column.FunctionCall{
+            .name = try self.allocator.dupe(u8, function_call.name),
+            .arguments = cloned_args,
+        };
+    }
+    
+    /// Clone a storage function argument
+    fn cloneStorageFunctionArgument(self: *Self, arg: storage.Column.FunctionArgument) !storage.Column.FunctionArgument {
+        return switch (arg) {
+            .Literal => |literal| {
+                const cloned_literal = try self.cloneValue(literal);
+                return storage.Column.FunctionArgument{ .Literal = cloned_literal };
+            },
+            .Column => |column| {
+                return storage.Column.FunctionArgument{ .Column = try self.allocator.dupe(u8, column) };
+            },
+            .Parameter => |param_index| {
+                return storage.Column.FunctionArgument{ .Parameter = param_index };
+            },
+        };
+    }
 
     fn cloneValue(self: *Self, value: storage.Value) !storage.Value {
         return switch (value) {
@@ -194,13 +323,31 @@ pub const VirtualMachine = struct {
         };
 
         for (insert.values) |row_values| {
-            // Clone the values to ensure they're owned by the storage engine
-            var cloned_values = try self.allocator.alloc(storage.Value, row_values.len);
+            // Handle default values for missing columns
+            var final_values = try self.allocator.alloc(storage.Value, table.schema.columns.len);
+            errdefer self.allocator.free(final_values);
+            
+            // Fill in provided values
             for (row_values, 0..) |value, i| {
-                cloned_values[i] = try self.cloneValue(try self.resolveValue(value));
+                if (i < final_values.len) {
+                    final_values[i] = try self.cloneValue(try self.resolveValue(value));
+                }
+            }
+            
+            // Fill in default values for missing columns
+            for (row_values.len..final_values.len) |i| {
+                if (table.schema.columns[i].default_value) |default_value| {
+                    final_values[i] = try self.evaluateStorageDefaultValue(default_value);
+                } else if (table.schema.columns[i].is_nullable) {
+                    final_values[i] = storage.Value.Null;
+                } else {
+                    // Non-nullable column without default value
+                    self.allocator.free(final_values);
+                    return error.MissingRequiredValue;
+                }
             }
 
-            const row = storage.Row{ .values = cloned_values };
+            const row = storage.Row{ .values = final_values };
             try table.insert(row);
             result.affected_rows += 1;
         }
@@ -221,6 +368,10 @@ pub const VirtualMachine = struct {
                 .data_type = column.data_type,
                 .is_primary_key = column.is_primary_key,
                 .is_nullable = column.is_nullable,
+                .default_value = if (column.default_value) |default_value| 
+                    try self.cloneStorageDefaultValue(default_value)
+                else 
+                    null,
             };
         }
 

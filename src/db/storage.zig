@@ -216,6 +216,46 @@ pub const Column = struct {
     data_type: DataType,
     is_primary_key: bool,
     is_nullable: bool,
+    default_value: ?DefaultValue,
+    
+    pub const DefaultValue = union(enum) {
+        Literal: Value,
+        FunctionCall: FunctionCall,
+        
+        pub fn deinit(self: DefaultValue, allocator: std.mem.Allocator) void {
+            switch (self) {
+                .Literal => |value| value.deinit(allocator),
+                .FunctionCall => |func| func.deinit(allocator),
+            }
+        }
+    };
+    
+    pub const FunctionCall = struct {
+        name: []const u8,
+        arguments: []FunctionArgument,
+        
+        pub fn deinit(self: FunctionCall, allocator: std.mem.Allocator) void {
+            allocator.free(self.name);
+            for (self.arguments) |arg| {
+                arg.deinit(allocator);
+            }
+            allocator.free(self.arguments);
+        }
+    };
+    
+    pub const FunctionArgument = union(enum) {
+        Literal: Value,
+        Column: []const u8,
+        Parameter: u32,
+        
+        pub fn deinit(self: FunctionArgument, allocator: std.mem.Allocator) void {
+            switch (self) {
+                .Literal => |value| value.deinit(allocator),
+                .Column => |col| allocator.free(col),
+                .Parameter => {},
+            }
+        }
+    };
 };
 
 /// Supported data types

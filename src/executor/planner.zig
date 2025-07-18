@@ -265,6 +265,15 @@ pub const Planner = struct {
                     }
                     break :blk true;
                 },
+                .default_value = blk: {
+                    for (col_def.constraints) |constraint| {
+                        if (constraint == .Default) {
+                            const default_value = try self.convertAstDefaultToStorage(constraint.Default);
+                            break :blk default_value;
+                        }
+                    }
+                    break :blk null;
+                },
             });
         }
 
@@ -382,6 +391,84 @@ pub const Planner = struct {
             .Blob => |b| storage.Value{ .Blob = try self.allocator.dupe(u8, b) },
             .Null => storage.Value.Null,
             .Parameter => |param_index| storage.Value{ .Parameter = param_index },
+        };
+    }
+    
+    /// Clone a default value (preserving FunctionCall for VM evaluation)
+    fn cloneDefaultValue(self: *Self, default_value: ast.DefaultValue) !ast.DefaultValue {
+        return switch (default_value) {
+            .Literal => |literal| ast.DefaultValue{ .Literal = try self.cloneAstValue(literal) },
+            .FunctionCall => |function_call| ast.DefaultValue{ .FunctionCall = try self.cloneFunctionCall(function_call) },
+        };
+    }
+    
+    /// Clone a function call
+    fn cloneFunctionCall(self: *Self, function_call: ast.FunctionCall) !ast.FunctionCall {
+        var cloned_args = try self.allocator.alloc(ast.FunctionArgument, function_call.arguments.len);
+        for (function_call.arguments, 0..) |arg, i| {
+            cloned_args[i] = try self.cloneFunctionArgument(arg);
+        }
+        
+        return ast.FunctionCall{
+            .name = try self.allocator.dupe(u8, function_call.name),
+            .arguments = cloned_args,
+        };
+    }
+    
+    /// Clone a function argument
+    fn cloneFunctionArgument(self: *Self, arg: ast.FunctionArgument) !ast.FunctionArgument {
+        return switch (arg) {
+            .Literal => |literal| ast.FunctionArgument{ .Literal = try self.cloneAstValue(literal) },
+            .Column => |column| ast.FunctionArgument{ .Column = try self.allocator.dupe(u8, column) },
+            .Parameter => |param_index| ast.FunctionArgument{ .Parameter = param_index },
+        };
+    }
+    
+    /// Convert AST default value to storage default value
+    fn convertAstDefaultToStorage(self: *Self, default_value: ast.DefaultValue) !storage.Column.DefaultValue {
+        return switch (default_value) {
+            .Literal => |literal| {
+                const storage_value = try self.cloneValue(literal);
+                return storage.Column.DefaultValue{ .Literal = storage_value };
+            },
+            .FunctionCall => |function_call| {
+                const storage_func = try self.convertAstFunctionToStorage(function_call);
+                return storage.Column.DefaultValue{ .FunctionCall = storage_func };
+            },
+        };
+    }
+    
+    /// Convert AST function call to storage function call
+    fn convertAstFunctionToStorage(self: *Self, function_call: ast.FunctionCall) !storage.Column.FunctionCall {
+        var storage_args = try self.allocator.alloc(storage.Column.FunctionArgument, function_call.arguments.len);
+        for (function_call.arguments, 0..) |arg, i| {
+            storage_args[i] = try self.convertAstFunctionArgToStorage(arg);
+        }
+        
+        return storage.Column.FunctionCall{
+            .name = try self.allocator.dupe(u8, function_call.name),
+            .arguments = storage_args,
+        };
+    }
+    
+    /// Convert AST function argument to storage function argument
+    fn convertAstFunctionArgToStorage(self: *Self, arg: ast.FunctionArgument) !storage.Column.FunctionArgument {
+        return switch (arg) {
+            .Literal => |literal| {
+                const storage_value = try self.cloneValue(literal);
+                return storage.Column.FunctionArgument{ .Literal = storage_value };
+            },
+            .String => |string| {
+                // Convert string to Text literal
+                const text_value = storage.Value{ .Text = try self.allocator.dupe(u8, string) };
+                return storage.Column.FunctionArgument{ .Literal = text_value };
+            },
+            .Column => |column| {
+                return storage.Column.FunctionArgument{ .Column = try self.allocator.dupe(u8, column) };
+            },
+            .Parameter => |param_index| {
+                return storage.Column.FunctionArgument{ .Parameter = param_index };
+            },
         };
     }
 

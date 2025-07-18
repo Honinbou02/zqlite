@@ -233,11 +233,15 @@ pub const FunctionCall = struct {
 pub const FunctionArgument = union(enum) {
     Literal: Value,
     String: []const u8,
+    Column: []const u8,
+    Parameter: u32,
     
     pub fn deinit(self: FunctionArgument, allocator: std.mem.Allocator) void {
         switch (self) {
             .Literal => |value| value.deinit(allocator),
             .String => |str| allocator.free(str),
+            .Column => |col| allocator.free(col),
+            .Parameter => {},
         }
     }
 };
