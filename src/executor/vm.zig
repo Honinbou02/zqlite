@@ -62,6 +62,11 @@ pub const VirtualMachine = struct {
             .HashJoin => |*join| try self.executeHashJoin(join, result),
             .Aggregate => |*agg| try self.executeAggregate(agg, result),
             .GroupBy => |*group| try self.executeGroupBy(group, result),
+            .BeginTransaction => try self.executeBeginTransaction(result),
+            .Commit => try self.executeCommit(result),
+            .Rollback => try self.executeRollback(result),
+            .CreateIndex => |*create_idx| try self.executeCreateIndex(create_idx, result),
+            .DropIndex => |*drop_idx| try self.executeDropIndex(drop_idx, result),
         }
     }
 
@@ -886,6 +891,66 @@ pub const VirtualMachine = struct {
         _ = result;
         // TODO: Implement group by operations
         return error.NotImplemented;
+    }
+    
+    /// Execute BEGIN TRANSACTION
+    fn executeBeginTransaction(self: *Self, result: *ExecutionResult) !void {
+        _ = self;
+        _ = result;
+        // TODO: Implement transaction support in storage engine
+        // For now, transactions are a no-op
+    }
+    
+    /// Execute COMMIT
+    fn executeCommit(self: *Self, result: *ExecutionResult) !void {
+        _ = self;
+        _ = result;
+        // TODO: Implement transaction support in storage engine
+        // For now, transactions are a no-op
+    }
+    
+    /// Execute ROLLBACK
+    fn executeRollback(self: *Self, result: *ExecutionResult) !void {
+        _ = self;
+        _ = result;
+        // TODO: Implement transaction support in storage engine
+        // For now, transactions are a no-op
+    }
+    
+    /// Execute CREATE INDEX
+    fn executeCreateIndex(self: *Self, create_idx: *planner.CreateIndexStep, result: *ExecutionResult) !void {
+        _ = result;
+        
+        // Check if table exists
+        const table = self.connection.storage_engine.getTable(create_idx.table_name) orelse {
+            return error.TableNotFound;
+        };
+        
+        // Verify columns exist
+        for (create_idx.columns) |col_name| {
+            var found = false;
+            for (table.schema.columns) |column| {
+                if (std.mem.eql(u8, column.name, col_name)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                return error.ColumnNotFound;
+            }
+        }
+        
+        // TODO: Actually create and store the index
+        // For now, index creation is a no-op
+    }
+    
+    /// Execute DROP INDEX
+    fn executeDropIndex(self: *Self, drop_idx: *planner.DropIndexStep, result: *ExecutionResult) !void {
+        _ = self;
+        _ = drop_idx;
+        _ = result;
+        // TODO: Implement index management in storage engine
+        // For now, index dropping is a no-op
     }
 };
 

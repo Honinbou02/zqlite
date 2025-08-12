@@ -23,6 +23,11 @@ pub const Planner = struct {
             .CreateTable => |*create| try self.planCreateTable(create),
             .Update => |*update| try self.planUpdate(update),
             .Delete => |*delete| try self.planDelete(delete),
+            .BeginTransaction => |*trans| try self.planTransaction(trans),
+            .Commit => |*trans| try self.planCommit(trans),
+            .Rollback => |*trans| try self.planRollback(trans),
+            .CreateIndex => |*create_idx| try self.planCreateIndex(create_idx),
+            .DropIndex => |*drop_idx| try self.planDropIndex(drop_idx),
         };
     }
 
@@ -252,6 +257,19 @@ pub const Planner = struct {
                     .Text => storage.DataType.Text,
                     .Real => storage.DataType.Real,
                     .Blob => storage.DataType.Blob,
+                    // Map extended types to their storage equivalents
+                    .DateTime => storage.DataType.Text,  // Store as ISO string
+                    .Timestamp => storage.DataType.Integer, // Store as Unix timestamp
+                    .Boolean => storage.DataType.Integer,  // Store as 0/1
+                    .Date => storage.DataType.Text,       // Store as ISO date
+                    .Time => storage.DataType.Text,       // Store as ISO time
+                    .Decimal => storage.DataType.Real,    // Store as float
+                    .Varchar => storage.DataType.Text,
+                    .Char => storage.DataType.Text,
+                    .Float => storage.DataType.Real,
+                    .Double => storage.DataType.Real,
+                    .SmallInt => storage.DataType.Integer,
+                    .BigInt => storage.DataType.Integer,
                 },
                 .is_primary_key = blk: {
                     for (col_def.constraints) |constraint| {
@@ -339,6 +357,94 @@ pub const Planner = struct {
             },
         });
 
+        return ExecutionPlan{
+            .steps = try steps.toOwnedSlice(),
+            .allocator = self.allocator,
+        };
+    }
+    
+    /// Plan transaction statement
+    fn planTransaction(self: *Self, trans: *const ast.TransactionStatement) !ExecutionPlan {
+        _ = trans;
+        var steps = std.ArrayList(ExecutionStep).init(self.allocator);
+        
+        try steps.append(ExecutionStep{
+            .BeginTransaction = {},
+        });
+        
+        return ExecutionPlan{
+            .steps = try steps.toOwnedSlice(),
+            .allocator = self.allocator,
+        };
+    }
+    
+    /// Plan commit statement
+    fn planCommit(self: *Self, trans: *const ast.TransactionStatement) !ExecutionPlan {
+        _ = trans;
+        var steps = std.ArrayList(ExecutionStep).init(self.allocator);
+        
+        try steps.append(ExecutionStep{
+            .Commit = {},
+        });
+        
+        return ExecutionPlan{
+            .steps = try steps.toOwnedSlice(),
+            .allocator = self.allocator,
+        };
+    }
+    
+    /// Plan rollback statement
+    fn planRollback(self: *Self, trans: *const ast.TransactionStatement) !ExecutionPlan {
+        _ = trans;
+        var steps = std.ArrayList(ExecutionStep).init(self.allocator);
+        
+        try steps.append(ExecutionStep{
+            .Rollback = {},
+        });
+        
+        return ExecutionPlan{
+            .steps = try steps.toOwnedSlice(),
+            .allocator = self.allocator,
+        };
+    }
+    
+    /// Plan create index statement
+    fn planCreateIndex(self: *Self, create_idx: *const ast.CreateIndexStatement) !ExecutionPlan {
+        var steps = std.ArrayList(ExecutionStep).init(self.allocator);
+        
+        // Clone columns
+        var columns = try self.allocator.alloc([]const u8, create_idx.columns.len);
+        for (create_idx.columns, 0..) |col, i| {
+            columns[i] = try self.allocator.dupe(u8, col);
+        }
+        
+        try steps.append(ExecutionStep{
+            .CreateIndex = CreateIndexStep{
+                .index_name = try self.allocator.dupe(u8, create_idx.index_name),
+                .table_name = try self.allocator.dupe(u8, create_idx.table_name),
+                .columns = columns,
+                .unique = create_idx.unique,
+                .if_not_exists = create_idx.if_not_exists,
+            },
+        });
+        
+        return ExecutionPlan{
+            .steps = try steps.toOwnedSlice(),
+            .allocator = self.allocator,
+        };
+    }
+    
+    /// Plan drop index statement
+    fn planDropIndex(self: *Self, drop_idx: *const ast.DropIndexStatement) !ExecutionPlan {
+        var steps = std.ArrayList(ExecutionStep).init(self.allocator);
+        
+        try steps.append(ExecutionStep{
+            .DropIndex = DropIndexStep{
+                .index_name = try self.allocator.dupe(u8, drop_idx.index_name),
+                .if_exists = drop_idx.if_exists,
+            },
+        });
+        
         return ExecutionPlan{
             .steps = try steps.toOwnedSlice(),
             .allocator = self.allocator,
@@ -512,6 +618,11 @@ pub const ExecutionStep = union(enum) {
     HashJoin: HashJoinStep,
     Aggregate: AggregateStep,
     GroupBy: GroupByStep,
+    BeginTransaction,
+    Commit,
+    Rollback,
+    CreateIndex: CreateIndexStep,
+    DropIndex: DropIndexStep,
 
     pub fn deinit(self: *ExecutionStep, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -527,6 +638,11 @@ pub const ExecutionStep = union(enum) {
             .HashJoin => |*step| step.deinit(allocator),
             .Aggregate => |*step| step.deinit(allocator),
             .GroupBy => |*step| step.deinit(allocator),
+            .BeginTransaction => {},
+            .Commit => {},
+            .Rollback => {},
+            .CreateIndex => |*step| step.deinit(allocator),
+            .DropIndex => |*step| step.deinit(allocator),
         }
     }
 };
@@ -643,6 +759,34 @@ pub const DeleteStep = struct {
         if (self.condition) |*cond| {
             cond.deinit(allocator);
         }
+    }
+};
+
+/// Create index step
+pub const CreateIndexStep = struct {
+    index_name: []const u8,
+    table_name: []const u8,
+    columns: [][]const u8,
+    unique: bool,
+    if_not_exists: bool,
+
+    pub fn deinit(self: *CreateIndexStep, allocator: std.mem.Allocator) void {
+        allocator.free(self.index_name);
+        allocator.free(self.table_name);
+        for (self.columns) |col| {
+            allocator.free(col);
+        }
+        allocator.free(self.columns);
+    }
+};
+
+/// Drop index step
+pub const DropIndexStep = struct {
+    index_name: []const u8,
+    if_exists: bool,
+
+    pub fn deinit(self: *DropIndexStep, allocator: std.mem.Allocator) void {
+        allocator.free(self.index_name);
     }
 };
 

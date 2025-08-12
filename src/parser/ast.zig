@@ -7,6 +7,11 @@ pub const Statement = union(enum) {
     CreateTable: CreateTableStatement,
     Update: UpdateStatement,
     Delete: DeleteStatement,
+    BeginTransaction: TransactionStatement,
+    Commit: TransactionStatement,
+    Rollback: TransactionStatement,
+    CreateIndex: CreateIndexStatement,
+    DropIndex: DropIndexStatement,
 
     pub fn deinit(self: *Statement, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -15,6 +20,11 @@ pub const Statement = union(enum) {
             .CreateTable => |*stmt| stmt.deinit(allocator),
             .Update => |*stmt| stmt.deinit(allocator),
             .Delete => |*stmt| stmt.deinit(allocator),
+            .BeginTransaction => |*stmt| stmt.deinit(allocator),
+            .Commit => |*stmt| stmt.deinit(allocator),
+            .Rollback => |*stmt| stmt.deinit(allocator),
+            .CreateIndex => |*stmt| stmt.deinit(allocator),
+            .DropIndex => |*stmt| stmt.deinit(allocator),
         }
     }
 };
@@ -76,6 +86,7 @@ pub const InsertStatement = struct {
     table: []const u8,
     columns: ?[][]const u8,
     values: [][]Value,
+    or_conflict: ?ConflictResolution,
 
     pub fn deinit(self: *InsertStatement, allocator: std.mem.Allocator) void {
         allocator.free(self.table);
@@ -93,6 +104,15 @@ pub const InsertStatement = struct {
         }
         allocator.free(self.values);
     }
+};
+
+/// Conflict resolution for INSERT
+pub const ConflictResolution = enum {
+    Replace,
+    Ignore,
+    Abort,
+    Fail,
+    Rollback,
 };
 
 /// CREATE TABLE statement AST
@@ -185,6 +205,8 @@ pub const AggregateFunctionType = enum {
     Avg,
     Min,
     Max,
+    GroupConcat,
+    CountDistinct,
 };
 
 /// Column definition in CREATE TABLE
@@ -200,6 +222,18 @@ pub const DataType = enum {
     Text,
     Real,
     Blob,
+    DateTime,
+    Timestamp,
+    Boolean,
+    Date,
+    Time,
+    Decimal,
+    Varchar,
+    Char,
+    Float,
+    Double,
+    SmallInt,
+    BigInt,
 };
 
 /// Default value for column constraints
@@ -253,10 +287,14 @@ pub const ColumnConstraint = union(enum) {
     Unique,
     AutoIncrement,
     Default: DefaultValue,
+    ForeignKey: ForeignKeyConstraint,
+    Check: CheckConstraint,
     
     pub fn deinit(self: ColumnConstraint, allocator: std.mem.Allocator) void {
         switch (self) {
             .Default => |default| default.deinit(allocator),
+            .ForeignKey => |fk| fk.deinit(allocator),
+            .Check => |check| check.deinit(allocator),
             else => {},
         }
     }
@@ -392,6 +430,77 @@ pub const OrderByClause = struct {
 pub const SortDirection = enum {
     Asc,
     Desc,
+};
+
+/// Foreign key constraint
+pub const ForeignKeyConstraint = struct {
+    reference_table: []const u8,
+    reference_column: []const u8,
+    on_delete: ?ForeignKeyAction,
+    on_update: ?ForeignKeyAction,
+    
+    pub fn deinit(self: ForeignKeyConstraint, allocator: std.mem.Allocator) void {
+        allocator.free(self.reference_table);
+        allocator.free(self.reference_column);
+    }
+};
+
+/// Foreign key action
+pub const ForeignKeyAction = enum {
+    Cascade,
+    SetNull,
+    Restrict,
+    NoAction,
+};
+
+/// Check constraint
+pub const CheckConstraint = struct {
+    condition: Condition,
+    
+    pub fn deinit(self: CheckConstraint, allocator: std.mem.Allocator) void {
+        _ = self;
+        _ = allocator;
+        // Condition cleanup handled by parent
+    }
+};
+
+/// Transaction statement
+pub const TransactionStatement = struct {
+    savepoint_name: ?[]const u8,
+    
+    pub fn deinit(self: *TransactionStatement, allocator: std.mem.Allocator) void {
+        if (self.savepoint_name) |name| {
+            allocator.free(name);
+        }
+    }
+};
+
+/// Create index statement
+pub const CreateIndexStatement = struct {
+    index_name: []const u8,
+    table_name: []const u8,
+    columns: [][]const u8,
+    unique: bool,
+    if_not_exists: bool,
+    
+    pub fn deinit(self: *CreateIndexStatement, allocator: std.mem.Allocator) void {
+        allocator.free(self.index_name);
+        allocator.free(self.table_name);
+        for (self.columns) |col| {
+            allocator.free(col);
+        }
+        allocator.free(self.columns);
+    }
+};
+
+/// Drop index statement
+pub const DropIndexStatement = struct {
+    index_name: []const u8,
+    if_exists: bool,
+    
+    pub fn deinit(self: *DropIndexStatement, allocator: std.mem.Allocator) void {
+        allocator.free(self.index_name);
+    }
 };
 
 test "ast creation" {

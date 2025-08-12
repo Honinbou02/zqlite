@@ -46,6 +46,10 @@ pub const Parser = struct {
             .Create => try self.parseCreate(),
             .Update => try self.parseUpdate(),
             .Delete => try self.parseDelete(),
+            .Begin => try self.parseTransaction(),
+            .Commit => try self.parseCommit(),
+            .Rollback => try self.parseRollback(),
+            .Drop => try self.parseDrop(),
             else => error.UnexpectedToken,
         };
     }
@@ -82,11 +86,87 @@ pub const Parser = struct {
         try self.expect(.From);
         const table_name = try self.expectIdentifier();
 
+        // Parse optional JOIN clauses
+        var joins = std.ArrayList(ast.JoinClause).init(self.allocator);
+        defer joins.deinit();
+        
+        while (true) {
+            const join_type = self.parseJoinType() catch break;
+            const join = try self.parseJoin(join_type);
+            try joins.append(join);
+        }
+
         // Parse optional WHERE clause
         var where_clause: ?ast.WhereClause = null;
         if (std.meta.activeTag(self.current_token) == .Where) {
             try self.advance();
             where_clause = try self.parseWhere();
+        }
+        
+        // Parse optional GROUP BY clause
+        var group_by: ?[][]const u8 = null;
+        if (std.meta.activeTag(self.current_token) == .Group) {
+            try self.advance();
+            try self.expect(.By);
+            
+            var group_columns = std.ArrayList([]const u8).init(self.allocator);
+            defer group_columns.deinit();
+            
+            while (true) {
+                const col = try self.expectIdentifier();
+                try group_columns.append(col);
+                
+                if (std.meta.activeTag(self.current_token) == .Comma) {
+                    try self.advance();
+                } else {
+                    break;
+                }
+            }
+            
+            group_by = try group_columns.toOwnedSlice();
+        }
+        
+        // Parse optional HAVING clause
+        var having: ?ast.WhereClause = null;
+        if (std.meta.activeTag(self.current_token) == .Having) {
+            try self.advance();
+            having = try self.parseWhere();
+        }
+        
+        // Parse optional ORDER BY clause
+        var order_by: ?[]ast.OrderByClause = null;
+        if (std.meta.activeTag(self.current_token) == .Order) {
+            try self.advance();
+            try self.expect(.By);
+            
+            var order_clauses = std.ArrayList(ast.OrderByClause).init(self.allocator);
+            defer order_clauses.deinit();
+            
+            while (true) {
+                const col = try self.expectIdentifier();
+                var direction = ast.SortDirection.Asc;
+                
+                if (std.meta.activeTag(self.current_token) == .Asc) {
+                    try self.advance();
+                    direction = .Asc;
+                } else if (std.meta.activeTag(self.current_token) == .Desc) {
+                    try self.advance();
+                    direction = .Desc;
+                }
+                
+                try order_clauses.append(ast.OrderByClause{
+                    .column = col,
+                    .direction = direction,
+                });
+                
+                if (std.meta.activeTag(self.current_token) == .Comma) {
+                    try self.advance();
+                } else {
+                    break;
+                }
+            }
+            
+            order_by = try order_clauses.toOwnedSlice();
         }
 
         // Parse optional LIMIT clause
@@ -117,20 +197,85 @@ pub const Parser = struct {
             .Select = ast.SelectStatement{
                 .columns = try columns.toOwnedSlice(),
                 .table = table_name,
-                .joins = &.{}, // Empty joins array for now
+                .joins = try joins.toOwnedSlice(),
                 .where_clause = where_clause,
-                .group_by = null, // Not implemented yet
-                .having = null, // Not implemented yet
-                .order_by = null, // Not implemented yet
+                .group_by = group_by,
+                .having = having,
+                .order_by = order_by,
                 .limit = limit,
                 .offset = offset,
             },
         };
     }
 
+    /// Parse JOIN type
+    fn parseJoinType(self: *Self) !ast.JoinType {
+        return switch (self.current_token) {
+            .Inner => {
+                try self.advance();
+                try self.expect(.Join);
+                return .Inner;
+            },
+            .Left => {
+                try self.advance();
+                // Optional OUTER
+                if (std.meta.activeTag(self.current_token) == .Outer) {
+                    try self.advance();
+                }
+                try self.expect(.Join);
+                return .Left;
+            },
+            .Right => {
+                try self.advance();
+                // Optional OUTER
+                if (std.meta.activeTag(self.current_token) == .Outer) {
+                    try self.advance();
+                }
+                try self.expect(.Join);
+                return .Right;
+            },
+            .Full => {
+                try self.advance();
+                // Optional OUTER
+                if (std.meta.activeTag(self.current_token) == .Outer) {
+                    try self.advance();
+                }
+                try self.expect(.Join);
+                return .Full;
+            },
+            .Join => {
+                try self.advance();
+                return .Inner; // Default to INNER JOIN
+            },
+            else => error.UnexpectedToken,
+        };
+    }
+    
+    /// Parse JOIN clause
+    fn parseJoin(self: *Self, join_type: ast.JoinType) !ast.JoinClause {
+        const table = try self.expectIdentifier();
+        
+        try self.expect(.On);
+        const condition = try self.parseCondition();
+        
+        return ast.JoinClause{
+            .join_type = join_type,
+            .table = table,
+            .condition = condition,
+        };
+    }
+
     /// Parse INSERT statement
     fn parseInsert(self: *Self) !ast.Statement {
         try self.expect(.Insert);
+        
+        // Parse optional OR conflict resolution
+        var or_conflict: ?ast.ConflictResolution = null;
+        if (std.meta.activeTag(self.current_token) == .Or) {
+            try self.advance();
+            or_conflict = try self.parseConflictResolution();
+        }
+        
         try self.expect(.Into);
 
         const table_name = try self.expectIdentifier();
@@ -196,14 +341,174 @@ pub const Parser = struct {
                 .table = table_name,
                 .columns = columns,
                 .values = try values.toOwnedSlice(),
+                .or_conflict = or_conflict,
             },
         };
     }
 
-    /// Parse CREATE TABLE statement
+    /// Parse transaction statement
+    fn parseTransaction(self: *Self) !ast.Statement {
+        try self.expect(.Begin);
+        
+        // Optional TRANSACTION keyword
+        if (std.meta.activeTag(self.current_token) == .Transaction) {
+            try self.advance();
+        }
+        
+        return ast.Statement{
+            .BeginTransaction = ast.TransactionStatement{ .savepoint_name = null },
+        };
+    }
+    
+    /// Parse commit statement
+    fn parseCommit(self: *Self) !ast.Statement {
+        try self.expect(.Commit);
+        
+        // Optional TRANSACTION keyword
+        if (std.meta.activeTag(self.current_token) == .Transaction) {
+            try self.advance();
+        }
+        
+        return ast.Statement{
+            .Commit = ast.TransactionStatement{ .savepoint_name = null },
+        };
+    }
+    
+    /// Parse rollback statement
+    fn parseRollback(self: *Self) !ast.Statement {
+        try self.expect(.Rollback);
+        
+        // Optional TRANSACTION keyword
+        if (std.meta.activeTag(self.current_token) == .Transaction) {
+            try self.advance();
+        }
+        
+        return ast.Statement{
+            .Rollback = ast.TransactionStatement{ .savepoint_name = null },
+        };
+    }
+    
+    /// Parse DROP statement
+    fn parseDrop(self: *Self) !ast.Statement {
+        try self.expect(.Drop);
+        
+        if (std.meta.activeTag(self.current_token) == .Index) {
+            try self.advance();
+            
+            // Optional IF EXISTS
+            var if_exists = false;
+            if (std.meta.activeTag(self.current_token) == .If) {
+                try self.advance();
+                try self.expect(.Exists);
+                if_exists = true;
+            }
+            
+            const index_name = try self.expectIdentifier();
+            
+            return ast.Statement{
+                .DropIndex = ast.DropIndexStatement{
+                    .index_name = index_name,
+                    .if_exists = if_exists,
+                },
+            };
+        } else if (std.meta.activeTag(self.current_token) == .Table) {
+            // TODO: Implement DROP TABLE
+            return error.NotImplemented;
+        }
+        
+        return error.UnexpectedToken;
+    }
+    
+    /// Parse CREATE statement dispatcher
     fn parseCreate(self: *Self) !ast.Statement {
         try self.expect(.Create);
-        try self.expect(.Table);
+        
+        if (std.meta.activeTag(self.current_token) == .Table) {
+            try self.advance();
+            return try self.parseCreateTable();
+        } else if (std.meta.activeTag(self.current_token) == .Index) {
+            return try self.parseCreateIndex();
+        } else if (std.meta.activeTag(self.current_token) == .Unique) {
+            try self.advance();
+            try self.expect(.Index);
+            return try self.parseCreateIndexImpl(true);
+        }
+        
+        return error.UnexpectedToken;
+    }
+    
+    /// Parse CREATE INDEX statement
+    fn parseCreateIndex(self: *Self) !ast.Statement {
+        try self.expect(.Index);
+        return try self.parseCreateIndexImpl(false);
+    }
+    
+    /// Parse CREATE INDEX implementation
+    fn parseCreateIndexImpl(self: *Self, unique: bool) !ast.Statement {
+        // Optional IF NOT EXISTS
+        var if_not_exists = false;
+        if (std.meta.activeTag(self.current_token) == .If) {
+            try self.advance();
+            try self.expect(.Not);
+            try self.expect(.Exists);
+            if_not_exists = true;
+        }
+        
+        const index_name = try self.expectIdentifier();
+        try self.expect(.On);
+        const table_name = try self.expectIdentifier();
+        
+        try self.expect(.LeftParen);
+        
+        var columns = std.ArrayList([]const u8).init(self.allocator);
+        defer columns.deinit();
+        
+        while (true) {
+            const col = try self.expectIdentifier();
+            try columns.append(col);
+            
+            if (std.meta.activeTag(self.current_token) == .Comma) {
+                try self.advance();
+            } else {
+                break;
+            }
+        }
+        
+        try self.expect(.RightParen);
+        
+        return ast.Statement{
+            .CreateIndex = ast.CreateIndexStatement{
+                .index_name = index_name,
+                .table_name = table_name,
+                .columns = try columns.toOwnedSlice(),
+                .unique = unique,
+                .if_not_exists = if_not_exists,
+            },
+        };
+    }
+    
+    /// Parse conflict resolution
+    fn parseConflictResolution(self: *Self) !ast.ConflictResolution {
+        return switch (self.current_token) {
+            .Replace => {
+                try self.advance();
+                return .Replace;
+            },
+            .Ignore => {
+                try self.advance();
+                return .Ignore;
+            },
+            .Rollback => {
+                try self.advance();
+                return .Rollback;
+            },
+            else => error.UnexpectedToken,
+        };
+    }
+    
+    /// Parse CREATE TABLE statement
+    fn parseCreateTable(self: *Self) !ast.Statement {
+        // Table keyword already consumed by parseCreate
 
         // Parse optional IF NOT EXISTS
         var if_not_exists = false;
@@ -347,16 +652,65 @@ pub const Parser = struct {
         const type_name = try self.expectIdentifier();
         defer self.allocator.free(type_name);
 
-        if (std.mem.eql(u8, type_name, "INTEGER") or std.mem.eql(u8, type_name, "integer")) {
+        // Convert to uppercase for case-insensitive comparison
+        var upper_type: [64]u8 = undefined;
+        const len = @min(type_name.len, upper_type.len);
+        for (type_name[0..len], 0..) |c, i| {
+            upper_type[i] = std.ascii.toUpper(c);
+        }
+        const type_str = upper_type[0..len];
+
+        if (std.mem.eql(u8, type_str, "INTEGER") or std.mem.eql(u8, type_str, "INT")) {
             return .Integer;
-        } else if (std.mem.eql(u8, type_name, "TEXT") or std.mem.eql(u8, type_name, "text")) {
+        } else if (std.mem.eql(u8, type_str, "TEXT") or std.mem.eql(u8, type_str, "STRING")) {
             return .Text;
-        } else if (std.mem.eql(u8, type_name, "REAL") or std.mem.eql(u8, type_name, "real")) {
+        } else if (std.mem.eql(u8, type_str, "REAL")) {
             return .Real;
-        } else if (std.mem.eql(u8, type_name, "BLOB") or std.mem.eql(u8, type_name, "blob")) {
+        } else if (std.mem.eql(u8, type_str, "BLOB")) {
             return .Blob;
+        } else if (std.mem.eql(u8, type_str, "DATETIME")) {
+            return .DateTime;
+        } else if (std.mem.eql(u8, type_str, "TIMESTAMP")) {
+            return .Timestamp;
+        } else if (std.mem.eql(u8, type_str, "BOOLEAN") or std.mem.eql(u8, type_str, "BOOL")) {
+            return .Boolean;
+        } else if (std.mem.eql(u8, type_str, "DATE")) {
+            return .Date;
+        } else if (std.mem.eql(u8, type_str, "TIME")) {
+            return .Time;
+        } else if (std.mem.eql(u8, type_str, "DECIMAL") or std.mem.eql(u8, type_str, "NUMERIC")) {
+            return .Decimal;
+        } else if (std.mem.eql(u8, type_str, "VARCHAR")) {
+            // Skip optional length specification
+            if (std.meta.activeTag(self.current_token) == .LeftParen) {
+                try self.advance();
+                if (self.current_token == .Integer) {
+                    try self.advance();
+                }
+                try self.expect(.RightParen);
+            }
+            return .Varchar;
+        } else if (std.mem.eql(u8, type_str, "CHAR")) {
+            // Skip optional length specification
+            if (std.meta.activeTag(self.current_token) == .LeftParen) {
+                try self.advance();
+                if (self.current_token == .Integer) {
+                    try self.advance();
+                }
+                try self.expect(.RightParen);
+            }
+            return .Char;
+        } else if (std.mem.eql(u8, type_str, "FLOAT")) {
+            return .Float;
+        } else if (std.mem.eql(u8, type_str, "DOUBLE")) {
+            return .Double;
+        } else if (std.mem.eql(u8, type_str, "SMALLINT")) {
+            return .SmallInt;
+        } else if (std.mem.eql(u8, type_str, "BIGINT")) {
+            return .BigInt;
         } else {
-            return error.UnknownDataType;
+            // Default to TEXT for unknown types for compatibility
+            return .Text;
         }
     }
 
@@ -366,6 +720,11 @@ pub const Parser = struct {
             .Primary => {
                 try self.advance();
                 try self.expect(.Key);
+                // Check for AUTOINCREMENT
+                if (std.meta.activeTag(self.current_token) == .Autoincrement) {
+                    try self.advance();
+                    return .AutoIncrement;
+                }
                 return .PrimaryKey;
             },
             .Not => {
@@ -377,10 +736,100 @@ pub const Parser = struct {
                 try self.advance();
                 return .Unique;
             },
+            .Autoincrement => {
+                try self.advance();
+                return .AutoIncrement;
+            },
             .Default => {
                 try self.advance();
                 const default_value = try self.parseDefaultValue();
                 return ast.ColumnConstraint{ .Default = default_value };
+            },
+            .Foreign => {
+                try self.advance();
+                try self.expect(.Key);
+                const fk = try self.parseForeignKeyConstraint();
+                return ast.ColumnConstraint{ .ForeignKey = fk };
+            },
+            .References => {
+                // Shorthand for FOREIGN KEY
+                const fk = try self.parseForeignKeyConstraint();
+                return ast.ColumnConstraint{ .ForeignKey = fk };
+            },
+            .Check => {
+                try self.advance();
+                try self.expect(.LeftParen);
+                const condition = try self.parseCondition();
+                try self.expect(.RightParen);
+                return ast.ColumnConstraint{ .Check = ast.CheckConstraint{ .condition = condition } };
+            },
+            else => error.UnexpectedToken,
+        };
+    }
+
+    /// Parse foreign key constraint
+    fn parseForeignKeyConstraint(self: *Self) !ast.ForeignKeyConstraint {
+        try self.expect(.References);
+        const ref_table = try self.expectIdentifier();
+        
+        try self.expect(.LeftParen);
+        const ref_column = try self.expectIdentifier();
+        try self.expect(.RightParen);
+        
+        var on_delete: ?ast.ForeignKeyAction = null;
+        var on_update: ?ast.ForeignKeyAction = null;
+        
+        // Parse ON DELETE/UPDATE actions
+        while (std.meta.activeTag(self.current_token) == .On) {
+            try self.advance();
+            
+            if (std.meta.activeTag(self.current_token) == .Delete) {
+                try self.advance();
+                on_delete = try self.parseForeignKeyAction();
+            } else if (std.meta.activeTag(self.current_token) == .Update) {
+                try self.advance();
+                on_update = try self.parseForeignKeyAction();
+            } else {
+                return error.ExpectedDeleteOrUpdate;
+            }
+        }
+        
+        return ast.ForeignKeyConstraint{
+            .reference_table = ref_table,
+            .reference_column = ref_column,
+            .on_delete = on_delete,
+            .on_update = on_update,
+        };
+    }
+    
+    /// Parse foreign key action
+    fn parseForeignKeyAction(self: *Self) !ast.ForeignKeyAction {
+        return switch (self.current_token) {
+            .Cascade => {
+                try self.advance();
+                return .Cascade;
+            },
+            .Set => {
+                try self.advance();
+                try self.expect(.Null);
+                return .SetNull;
+            },
+            .Restrict => {
+                try self.advance();
+                return .Restrict;
+            },
+            .Identifier => |id| {
+                // Check for "NO ACTION"
+                if (std.mem.eql(u8, id, "NO") or std.mem.eql(u8, id, "no")) {
+                    try self.advance();
+                    const action = try self.expectIdentifier();
+                    defer self.allocator.free(action);
+                    if (!std.mem.eql(u8, action, "ACTION") and !std.mem.eql(u8, action, "action")) {
+                        return error.ExpectedAction;
+                    }
+                    return .NoAction;
+                }
+                return error.UnexpectedToken;
             },
             else => error.UnexpectedToken,
         };
@@ -417,7 +866,65 @@ pub const Parser = struct {
             }
             
             // Not a function call, treat as identifier (this shouldn't happen in DEFAULT context)
+            // Check for special DEFAULT keywords
+            const id = self.current_token.Identifier;
+            // Don't free id since it's owned by the token
+            
+            // Handle CURRENT_TIMESTAMP and similar
+            if (std.mem.eql(u8, id, "CURRENT_TIMESTAMP") or std.mem.eql(u8, id, "current_timestamp")) {
+                try self.advance();
+                return ast.DefaultValue{ 
+                    .FunctionCall = ast.FunctionCall{
+                        .name = try self.allocator.dupe(u8, "CURRENT_TIMESTAMP"),
+                        .arguments = &.{},
+                    }
+                };
+            } else if (std.mem.eql(u8, id, "CURRENT_DATE") or std.mem.eql(u8, id, "current_date")) {
+                try self.advance();
+                return ast.DefaultValue{ 
+                    .FunctionCall = ast.FunctionCall{
+                        .name = try self.allocator.dupe(u8, "CURRENT_DATE"),
+                        .arguments = &.{},
+                    }
+                };
+            } else if (std.mem.eql(u8, id, "CURRENT_TIME") or std.mem.eql(u8, id, "current_time")) {
+                try self.advance();
+                return ast.DefaultValue{ 
+                    .FunctionCall = ast.FunctionCall{
+                        .name = try self.allocator.dupe(u8, "CURRENT_TIME"),
+                        .arguments = &.{},
+                    }
+                };
+            }
+            
             return error.UnexpectedToken;
+        }
+        
+        // Check for special keywords that are DEFAULT values
+        if (std.meta.activeTag(self.current_token) == .Current_Timestamp) {
+            try self.advance();
+            return ast.DefaultValue{ 
+                .FunctionCall = ast.FunctionCall{
+                    .name = try self.allocator.dupe(u8, "CURRENT_TIMESTAMP"),
+                    .arguments = &.{},
+                }
+            };
+        } else if (std.meta.activeTag(self.current_token) == .Current_Date) {
+            try self.advance();
+            return ast.DefaultValue{ 
+                .FunctionCall = ast.FunctionCall{
+                    .name = try self.allocator.dupe(u8, "CURRENT_DATE"),
+                    .arguments = &.{},
+                }
+            };
+        } else if (std.meta.activeTag(self.current_token) == .Current_Time) {
+            try self.advance();
+            return ast.DefaultValue{ 
+                .FunctionCall = ast.FunctionCall{
+                    .name = try self.allocator.dupe(u8, "CURRENT_TIME"),
+                    .arguments = &.{},
+                }
+            };
         }
         
         // Otherwise, it's a literal value

@@ -26,6 +26,24 @@ pub const Tokenizer = struct {
                 continue;
             }
 
+            // Skip SQL comments
+            if (self.current_char.? == '-') {
+                const next_pos = self.position + 1;
+                if (next_pos < self.input.len and self.input[next_pos] == '-') {
+                    self.skipLineComment();
+                    continue;
+                }
+            }
+
+            // Skip multi-line comments
+            if (self.current_char.? == '/') {
+                const next_pos = self.position + 1;
+                if (next_pos < self.input.len and self.input[next_pos] == '*') {
+                    try self.skipBlockComment();
+                    continue;
+                }
+            }
+
             // Numbers
             if (std.ascii.isDigit(self.current_char.?)) {
                 return try self.readNumber(allocator);
@@ -91,6 +109,26 @@ pub const Tokenizer = struct {
                     self.advance();
                     return Token{ .Asterisk = {} };
                 },
+                '+' => {
+                    self.advance();
+                    return Token{ .Plus = {} };
+                },
+                '-' => {
+                    self.advance();
+                    return Token{ .Minus = {} };
+                },
+                '/' => {
+                    self.advance();
+                    return Token{ .Divide = {} };
+                },
+                '%' => {
+                    self.advance();
+                    return Token{ .Modulo = {} };
+                },
+                '.' => {
+                    self.advance();
+                    return Token{ .Dot = {} };
+                },
                 '?' => {
                     self.advance();
                     return Token{ .QuestionMark = {} };
@@ -119,6 +157,46 @@ pub const Tokenizer = struct {
         while (self.current_char != null and std.ascii.isWhitespace(self.current_char.?)) {
             self.advance();
         }
+    }
+
+    /// Skip line comment (-- comment)
+    fn skipLineComment(self: *Self) void {
+        // Skip the '--'
+        self.advance();
+        self.advance();
+        
+        // Skip until end of line or end of input
+        while (self.current_char != null and self.current_char.? != '\n') {
+            self.advance();
+        }
+        
+        // Skip the newline if present
+        if (self.current_char == '\n') {
+            self.advance();
+        }
+    }
+
+    /// Skip block comment (/* comment */)
+    fn skipBlockComment(self: *Self) !void {
+        // Skip the '/*'
+        self.advance();
+        self.advance();
+        
+        // Skip until we find '*/'
+        while (self.current_char != null) {
+            if (self.current_char.? == '*') {
+                self.advance();
+                if (self.current_char != null and self.current_char.? == '/') {
+                    self.advance();
+                    return;
+                }
+            } else {
+                self.advance();
+            }
+        }
+        
+        // If we reach here, the comment was not closed
+        return error.UnterminatedComment;
     }
 
     /// Read a number token
@@ -228,6 +306,40 @@ pub const Token = union(enum) {
     Limit,
     Offset,
     Default,
+    Foreign,
+    References,
+    On,
+    Cascade,
+    Restrict,
+    Index,
+    Drop,
+    Inner,
+    Left,
+    Right,
+    Full,
+    Outer,
+    Join,
+    Group,
+    By,
+    Having,
+    Order,
+    Asc,
+    Desc,
+    Count,
+    Sum,
+    Avg,
+    Min,
+    Max,
+    Distinct,
+    As,
+    Transaction,
+    Autoincrement,
+    Check,
+    Replace,
+    Ignore,
+    Current_Timestamp,
+    Current_Date,
+    Current_Time,
 
     // Operators
     Equal,
@@ -244,6 +356,11 @@ pub const Token = union(enum) {
     Semicolon,
     Asterisk,
     QuestionMark,
+    Plus,
+    Minus,
+    Divide,
+    Modulo,
+    Dot,
 
     // Special
     EOF,
@@ -316,6 +433,74 @@ fn getKeyword(identifier: []const u8) ?Token {
         .{ "offset", .Offset },
         .{ "DEFAULT", .Default },
         .{ "default", .Default },
+        .{ "FOREIGN", .Foreign },
+        .{ "foreign", .Foreign },
+        .{ "REFERENCES", .References },
+        .{ "references", .References },
+        .{ "ON", .On },
+        .{ "on", .On },
+        .{ "CASCADE", .Cascade },
+        .{ "cascade", .Cascade },
+        .{ "RESTRICT", .Restrict },
+        .{ "restrict", .Restrict },
+        .{ "INDEX", .Index },
+        .{ "index", .Index },
+        .{ "DROP", .Drop },
+        .{ "drop", .Drop },
+        .{ "INNER", .Inner },
+        .{ "inner", .Inner },
+        .{ "LEFT", .Left },
+        .{ "left", .Left },
+        .{ "RIGHT", .Right },
+        .{ "right", .Right },
+        .{ "FULL", .Full },
+        .{ "full", .Full },
+        .{ "OUTER", .Outer },
+        .{ "outer", .Outer },
+        .{ "JOIN", .Join },
+        .{ "join", .Join },
+        .{ "GROUP", .Group },
+        .{ "group", .Group },
+        .{ "BY", .By },
+        .{ "by", .By },
+        .{ "HAVING", .Having },
+        .{ "having", .Having },
+        .{ "ORDER", .Order },
+        .{ "order", .Order },
+        .{ "ASC", .Asc },
+        .{ "asc", .Asc },
+        .{ "DESC", .Desc },
+        .{ "desc", .Desc },
+        .{ "COUNT", .Count },
+        .{ "count", .Count },
+        .{ "SUM", .Sum },
+        .{ "sum", .Sum },
+        .{ "AVG", .Avg },
+        .{ "avg", .Avg },
+        .{ "MIN", .Min },
+        .{ "min", .Min },
+        .{ "MAX", .Max },
+        .{ "max", .Max },
+        .{ "DISTINCT", .Distinct },
+        .{ "distinct", .Distinct },
+        .{ "AS", .As },
+        .{ "as", .As },
+        .{ "TRANSACTION", .Transaction },
+        .{ "transaction", .Transaction },
+        .{ "AUTOINCREMENT", .Autoincrement },
+        .{ "autoincrement", .Autoincrement },
+        .{ "CHECK", .Check },
+        .{ "check", .Check },
+        .{ "REPLACE", .Replace },
+        .{ "replace", .Replace },
+        .{ "IGNORE", .Ignore },
+        .{ "ignore", .Ignore },
+        .{ "CURRENT_TIMESTAMP", .Current_Timestamp },
+        .{ "current_timestamp", .Current_Timestamp },
+        .{ "CURRENT_DATE", .Current_Date },
+        .{ "current_date", .Current_Date },
+        .{ "CURRENT_TIME", .Current_Time },
+        .{ "current_time", .Current_Time },
     });
 
     return keyword_map.get(identifier);
