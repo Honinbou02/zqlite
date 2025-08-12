@@ -131,6 +131,121 @@ pub const Connection = struct {
         return PreparedStatement.prepare(self.allocator, self, sql);
     }
 
+    // ========== BROAD API SURFACES (v1.2.2) ==========
+    
+    /// Execute SQL and return structured results (SQLite-style)
+    pub fn query(self: *Self, sql: []const u8) !ResultSet {
+        // Parse the SQL
+        var parsed = try parser.parse(self.allocator, sql);
+        defer parsed.deinit();
+        
+        // Create execution plan
+        var query_planner = planner.Planner.init(self.allocator);
+        var plan = try query_planner.plan(&parsed.statement);
+        defer plan.deinit();
+        
+        // Execute and get results
+        var virtual_machine = vm.VirtualMachine.init(self.allocator, self);
+        const result = try virtual_machine.execute(&plan);
+        
+        // Convert to ResultSet
+        return ResultSet{
+            .allocator = self.allocator,
+            .connection = self,
+            .rows = result.rows,
+            .current_index = 0,
+            .column_names = try self.extractColumnNames(&parsed.statement),
+        };
+    }
+    
+    /// Execute SQL and return single row (or null)
+    pub fn queryRow(self: *Self, sql: []const u8) !?Row {
+        var result_set = try self.query(sql);
+        defer result_set.deinit();
+        
+        return result_set.next();
+    }
+    
+    /// Execute SQL statement and return affected row count
+    pub fn exec(self: *Self, sql: []const u8) !u32 {
+        // Parse the SQL
+        var parsed = try parser.parse(self.allocator, sql);
+        defer parsed.deinit();
+        
+        // Create execution plan
+        var query_planner = planner.Planner.init(self.allocator);
+        var plan = try query_planner.plan(&parsed.statement);
+        defer plan.deinit();
+        
+        // Execute and get results
+        var virtual_machine = vm.VirtualMachine.init(self.allocator, self);
+        var result = try virtual_machine.execute(&plan);
+        defer result.deinit(self.allocator);
+        
+        return result.affected_rows;
+    }
+    
+    /// Get table schema information
+    pub fn getTableSchema(self: *Self, table_name: []const u8) !?TableSchema {
+        const table = self.storage_engine.getTable(table_name) orelse return null;
+        
+        // Clone the schema for safe return
+        var cloned_columns = try self.allocator.alloc(ColumnInfo, table.schema.columns.len);
+        for (table.schema.columns, 0..) |column, i| {
+            cloned_columns[i] = ColumnInfo{
+                .name = try self.allocator.dupe(u8, column.name),
+                .data_type = column.data_type,
+                .is_primary_key = column.is_primary_key,
+                .is_nullable = column.is_nullable,
+                .has_default = column.default_value != null,
+            };
+        }
+        
+        return TableSchema{
+            .allocator = self.allocator,
+            .table_name = try self.allocator.dupe(u8, table_name),
+            .columns = cloned_columns,
+        };
+    }
+    
+    /// List all table names in the database
+    pub fn getTableNames(self: *Self) ![][]const u8 {
+        return self.storage_engine.getTableNames(self.allocator);
+    }
+    
+    /// Extract column names from parsed statement (helper)
+    fn extractColumnNames(self: *Self, statement: *const ast.Statement) ![][]const u8 {
+        switch (statement.*) {
+            .Select => |select| {
+                if (select.columns.len == 1 and std.mem.eql(u8, select.columns[0].name, "*")) {
+                    // SELECT * - get columns from table schema
+                    const table_name = select.table;
+                    const table = self.storage_engine.getTable(table_name);
+                    if (table) |t| {
+                        var column_names = try self.allocator.alloc([]const u8, t.schema.columns.len);
+                        for (t.schema.columns, 0..) |column, i| {
+                            column_names[i] = try self.allocator.dupe(u8, column.name);
+                        }
+                        return column_names;
+                    }
+                }
+                
+                // Explicit column list
+                var column_names = try self.allocator.alloc([]const u8, select.columns.len);
+                for (select.columns, 0..) |column, i| {
+                    column_names[i] = try self.allocator.dupe(u8, column.name);
+                }
+                return column_names;
+            },
+            else => {
+                // Non-SELECT statements have no columns
+                return try self.allocator.alloc([]const u8, 0);
+            }
+        }
+    }
+    
+    // ========== END BROAD API SURFACES ==========
+
     /// Close the database connection
     pub fn close(self: *Self) void {
         if (self.wal) |w| {
@@ -158,6 +273,230 @@ pub const ConnectionInfo = struct {
     path: ?[]const u8,
     has_wal: bool,
 };
+
+// ========== BROAD API TYPES (v1.2.2) ==========
+
+/// Result set for query iteration
+pub const ResultSet = struct {
+    allocator: std.mem.Allocator,
+    connection: *Connection,
+    rows: std.ArrayList(storage.Row),
+    current_index: usize,
+    column_names: [][]const u8,
+
+    const Self = @This();
+
+    /// Get next row (returns null when done)
+    pub fn next(self: *Self) ?Row {
+        if (self.current_index >= self.rows.items.len) {
+            return null;
+        }
+        
+        const storage_row = &self.rows.items[self.current_index];
+        self.current_index += 1;
+        
+        return Row{
+            .allocator = self.allocator,
+            .values = storage_row.values,
+            .column_names = self.column_names,
+        };
+    }
+    
+    /// Reset to beginning
+    pub fn reset(self: *Self) void {
+        self.current_index = 0;
+    }
+    
+    /// Get total row count
+    pub fn count(self: *Self) usize {
+        return self.rows.items.len;
+    }
+    
+    /// Get column count
+    pub fn columnCount(self: *Self) usize {
+        return self.column_names.len;
+    }
+    
+    /// Get column name by index
+    pub fn columnName(self: *Self, index: usize) ?[]const u8 {
+        if (index >= self.column_names.len) return null;
+        return self.column_names[index];
+    }
+    
+    /// Clean up result set
+    pub fn deinit(self: *Self) void {
+        // Clean up column names
+        for (self.column_names) |name| {
+            self.allocator.free(name);
+        }
+        self.allocator.free(self.column_names);
+        
+        // Clean up rows (they're managed by the underlying ExecutionResult)
+        self.rows.deinit();
+    }
+};
+
+/// Single row with type-safe value access
+pub const Row = struct {
+    allocator: std.mem.Allocator,
+    values: []storage.Value,
+    column_names: [][]const u8,
+
+    const Self = @This();
+    
+    /// Get value by column index
+    pub fn getValue(self: *const Self, index: usize) ?storage.Value {
+        if (index >= self.values.len) return null;
+        return self.values[index];
+    }
+    
+    /// Get value by column name
+    pub fn getValueByName(self: *const Self, name: []const u8) ?storage.Value {
+        for (self.column_names, 0..) |col_name, i| {
+            if (std.mem.eql(u8, col_name, name)) {
+                return self.getValue(i);
+            }
+        }
+        return null;
+    }
+    
+    /// Get integer value by index
+    pub fn getInt(self: *const Self, index: usize) ?i64 {
+        const value = self.getValue(index) orelse return null;
+        return switch (value) {
+            .Integer => |i| i,
+            .Real => |r| @intFromFloat(r),
+            else => null,
+        };
+    }
+    
+    /// Get integer value by column name
+    pub fn getIntByName(self: *const Self, name: []const u8) ?i64 {
+        const value = self.getValueByName(name) orelse return null;
+        return switch (value) {
+            .Integer => |i| i,
+            .Real => |r| @intFromFloat(r),
+            else => null,
+        };
+    }
+    
+    /// Get real/float value by index
+    pub fn getReal(self: *const Self, index: usize) ?f64 {
+        const value = self.getValue(index) orelse return null;
+        return switch (value) {
+            .Real => |r| r,
+            .Integer => |i| @floatFromInt(i),
+            else => null,
+        };
+    }
+    
+    /// Get real/float value by column name
+    pub fn getRealByName(self: *const Self, name: []const u8) ?f64 {
+        const value = self.getValueByName(name) orelse return null;
+        return switch (value) {
+            .Real => |r| r,
+            .Integer => |i| @floatFromInt(i),
+            else => null,
+        };
+    }
+    
+    /// Get text value by index
+    pub fn getText(self: *const Self, index: usize) ?[]const u8 {
+        const value = self.getValue(index) orelse return null;
+        return switch (value) {
+            .Text => |t| t,
+            else => null,
+        };
+    }
+    
+    /// Get text value by column name
+    pub fn getTextByName(self: *const Self, name: []const u8) ?[]const u8 {
+        const value = self.getValueByName(name) orelse return null;
+        return switch (value) {
+            .Text => |t| t,
+            else => null,
+        };
+    }
+    
+    /// Get blob value by index
+    pub fn getBlob(self: *const Self, index: usize) ?[]const u8 {
+        const value = self.getValue(index) orelse return null;
+        return switch (value) {
+            .Blob => |b| b,
+            else => null,
+        };
+    }
+    
+    /// Get blob value by column name
+    pub fn getBlobByName(self: *const Self, name: []const u8) ?[]const u8 {
+        const value = self.getValueByName(name) orelse return null;
+        return switch (value) {
+            .Blob => |b| b,
+            else => null,
+        };
+    }
+    
+    /// Check if value is null by index
+    pub fn isNull(self: *const Self, index: usize) bool {
+        const value = self.getValue(index) orelse return true;
+        return value == .Null;
+    }
+    
+    /// Check if value is null by column name
+    pub fn isNullByName(self: *const Self, name: []const u8) bool {
+        const value = self.getValueByName(name) orelse return true;
+        return value == .Null;
+    }
+    
+    /// Get column count
+    pub fn columnCount(self: *const Self) usize {
+        return self.values.len;
+    }
+};
+
+/// Table schema information
+pub const TableSchema = struct {
+    allocator: std.mem.Allocator,
+    table_name: []const u8,
+    columns: []ColumnInfo,
+
+    const Self = @This();
+    
+    /// Find column by name
+    pub fn getColumn(self: *const Self, name: []const u8) ?ColumnInfo {
+        for (self.columns) |column| {
+            if (std.mem.eql(u8, column.name, name)) {
+                return column;
+            }
+        }
+        return null;
+    }
+    
+    /// Get column count
+    pub fn columnCount(self: *const Self) usize {
+        return self.columns.len;
+    }
+    
+    /// Clean up table schema
+    pub fn deinit(self: *Self) void {
+        self.allocator.free(self.table_name);
+        for (self.columns) |column| {
+            self.allocator.free(column.name);
+        }
+        self.allocator.free(self.columns);
+    }
+};
+
+/// Column metadata
+pub const ColumnInfo = struct {
+    name: []const u8,
+    data_type: storage.DataType,
+    is_primary_key: bool,
+    is_nullable: bool,
+    has_default: bool,
+};
+
+// ========== END BROAD API TYPES ==========
 
 /// Prepared statement for optimized execution
 pub const PreparedStatement = struct {

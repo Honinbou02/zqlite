@@ -80,6 +80,20 @@ pub const StorageEngine = struct {
         return self.tables.get(name);
     }
 
+    /// Get all table names in the database (v1.2.2 broad API)
+    pub fn getTableNames(self: *Self, allocator: std.mem.Allocator) ![][]const u8 {
+        var table_names = try allocator.alloc([]const u8, self.tables.count());
+        var iterator = self.tables.iterator();
+        var index: usize = 0;
+        
+        while (iterator.next()) |entry| {
+            table_names[index] = try allocator.dupe(u8, entry.key_ptr.*);
+            index += 1;
+        }
+        
+        return table_names;
+    }
+
     /// Drop a table
     pub fn dropTable(self: *Self, name: []const u8) !void {
         if (self.tables.fetchRemove(name)) |entry| {

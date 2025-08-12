@@ -89,6 +89,10 @@ pub fn build(b: *std.Build) void {
     // Basic examples that work without external dependencies
     createBasicExample(b, "powerdns_example", lib, target, optimize, zsync);
     createBasicExample(b, "cipher_dns", lib, target, optimize, zsync);
+    
+    // v1.2.2 Universal API examples
+    createBasicExample(b, "universal_api_demo", lib, target, optimize, zsync);
+    createBasicExample(b, "web_backend_demo", lib, target, optimize, zsync);
 }
 
 fn createBasicExample(b: *std.Build, name: []const u8, lib: *std.Build.Step.Compile, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, zsync: *std.Build.Dependency) void {

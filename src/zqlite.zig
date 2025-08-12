@@ -21,54 +21,72 @@ pub const vm = @import("executor/vm.zig");
 // CLI shell
 pub const cli = @import("shell/cli.zig");
 
-// Advanced cryptographic features (optional)
-pub const crypto = struct {
-    pub const CryptoEngine = @import("crypto/secure_storage.zig").CryptoEngine;
-    pub const CryptoTransactionLog = @import("crypto/secure_storage.zig").CryptoTransactionLog;
-    pub const EncryptedField = struct {
-        ciphertext: []u8,
-        nonce: [12]u8,
-        tag: [16]u8,
+// Advanced cryptographic features (optional - v1.2.2)
+pub const crypto = if (@import("builtin").is_test or @hasDecl(@import("root"), "zqlite_enable_crypto"))
+    struct {
+        pub const CryptoEngine = @import("crypto/secure_storage.zig").CryptoEngine;
+        pub const CryptoTransactionLog = @import("crypto/secure_storage.zig").CryptoTransactionLog;
+        pub const EncryptedField = struct {
+            ciphertext: []u8,
+            nonce: [12]u8,
+            tag: [16]u8,
 
-        pub fn deinit(self: *EncryptedField, allocator: std.mem.Allocator) void {
-            allocator.free(self.ciphertext);
-        }
-    };
-    pub const ZKProof = struct {
-        proof_data: []u8,
-        commitment: [32]u8,
-        challenge: [32]u8,
+            pub fn deinit(self: *EncryptedField, allocator: std.mem.Allocator) void {
+                allocator.free(self.ciphertext);
+            }
+        };
+        pub const ZKProof = struct {
+            proof_data: []u8,
+            commitment: [32]u8,
+            challenge: [32]u8,
 
-        pub fn deinit(self: *ZKProof, allocator: std.mem.Allocator) void {
-            allocator.free(self.proof_data);
-        }
-    };
-    pub const HybridSignature = struct {
-        classical: [64]u8, // Ed25519 signature
-        post_quantum: []u8, // ML-DSA-65 signature
+            pub fn deinit(self: *ZKProof, allocator: std.mem.Allocator) void {
+                allocator.free(self.proof_data);
+            }
+        };
+        pub const HybridSignature = struct {
+            classical: [64]u8, // Ed25519 signature
+            post_quantum: []u8, // ML-DSA-65 signature
 
-        pub fn deinit(self: *HybridSignature, allocator: std.mem.Allocator) void {
-            allocator.free(self.post_quantum);
-        }
+            pub fn deinit(self: *HybridSignature, allocator: std.mem.Allocator) void {
+                allocator.free(self.post_quantum);
+            }
+        };
+    }
+else
+    struct {
+        // Crypto disabled - stub implementations
+        pub const CryptoEngine = @TypeOf(null);
+        pub const CryptoTransactionLog = @TypeOf(null);
+        pub const EncryptedField = @TypeOf(null);
+        pub const ZKProof = @TypeOf(null);
+        pub const HybridSignature = @TypeOf(null);
     };
-};
 
 // Async database operations
 pub const async_ops = @import("concurrent/async_operations.zig");
 
-// Post-quantum transport (optional)
-pub const transport = struct {
-    pub const Transport = @import("transport/transport.zig").Transport;
-    pub const PQQuicTransport = @import("transport/pq_quic.zig").PQQuicTransport;
-    pub const PQDatabaseTransport = @import("transport/pq_quic.zig").PQDatabaseTransport;
-};
+// Post-quantum transport (optional - v1.2.2)
+pub const transport = if (@import("builtin").is_test or @hasDecl(@import("root"), "zqlite_enable_transport"))
+    struct {
+        pub const Transport = @import("transport/transport.zig").Transport;
+        pub const PQQuicTransport = @import("transport/pq_quic.zig").PQQuicTransport;
+        pub const PQDatabaseTransport = @import("transport/pq_quic.zig").PQDatabaseTransport;
+    }
+else
+    struct {
+        // Transport disabled - stub implementations
+        pub const Transport = @TypeOf(null);
+        pub const PQQuicTransport = @TypeOf(null);
+        pub const PQDatabaseTransport = @TypeOf(null);
+    };
 
 // Advanced indexing
 pub const advanced_indexes = @import("indexing/advanced_indexes.zig");
 
 // Version and metadata
-pub const version = "1.2.1";
-pub const build_info = "zqlite " ++ version ++ " - Next-generation cryptographic database";
+pub const version = "1.2.2";
+pub const build_info = "zqlite " ++ version ++ " - Universal embedded database with optional crypto features";
 
 // Main API functions
 pub fn open(path: []const u8) !*db.Connection {
