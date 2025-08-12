@@ -525,10 +525,20 @@ pub const Parser = struct {
 
         var columns = std.ArrayList(ast.ColumnDefinition).init(self.allocator);
         defer columns.deinit();
+        
+        var table_constraints = std.ArrayList(ast.TableConstraint).init(self.allocator);
+        defer table_constraints.deinit();
 
         while (true) {
-            const column = try self.parseColumnDefinition();
-            try columns.append(column);
+            // Check if this is a table-level constraint
+            if (self.isTableConstraintToken()) {
+                const constraint = try self.parseTableConstraint();
+                try table_constraints.append(constraint);
+            } else {
+                // Parse as column definition
+                const column = try self.parseColumnDefinition();
+                try columns.append(column);
+            }
 
             if (std.meta.activeTag(self.current_token) == .Comma) {
                 try self.advance();
@@ -543,6 +553,7 @@ pub const Parser = struct {
             .CreateTable = ast.CreateTableStatement{
                 .table_name = table_name,
                 .columns = try columns.toOwnedSlice(),
+                .table_constraints = try table_constraints.toOwnedSlice(),
                 .if_not_exists = if_not_exists,
             },
         };
@@ -795,6 +806,7 @@ pub const Parser = struct {
         }
         
         return ast.ForeignKeyConstraint{
+            .column = null, // column-level constraint
             .reference_table = ref_table,
             .reference_column = ref_column,
             .on_delete = on_delete,
@@ -1128,6 +1140,109 @@ pub const Parser = struct {
         
         // Get the next token without affecting our state
         return try peek_tokenizer.nextToken(self.allocator);
+    }
+
+    /// Check if current token indicates a table-level constraint
+    fn isTableConstraintToken(self: *Self) bool {
+        return switch (self.current_token) {
+            .Foreign, .Unique, .Primary, .Check => true,
+            else => false,
+        };
+    }
+    
+    /// Parse table-level constraint
+    fn parseTableConstraint(self: *Self) !ast.TableConstraint {
+        return switch (self.current_token) {
+            .Foreign => {
+                try self.advance(); // consume FOREIGN
+                try self.expect(.Key); // expect KEY
+                try self.expect(.LeftParen);
+                const column = try self.expectIdentifier();
+                try self.expect(.RightParen);
+                
+                try self.expect(.References);
+                const ref_table_name = try self.expectIdentifier();
+                try self.expect(.LeftParen);
+                const ref_column_name = try self.expectIdentifier();
+                try self.expect(.RightParen);
+                
+                return ast.TableConstraint{ 
+                    .ForeignKey = ast.ForeignKeyConstraint{
+                        .column = column,
+                        .reference_table = ref_table_name,
+                        .reference_column = ref_column_name,
+                        .on_delete = null,
+                        .on_update = null,
+                    }
+                };
+            },
+            .Unique => {
+                try self.advance(); // consume UNIQUE
+                try self.expect(.LeftParen);
+                
+                var columns_list = std.ArrayList([]const u8).init(self.allocator);
+                defer columns_list.deinit();
+                
+                while (true) {
+                    const column = try self.expectIdentifier();
+                    try columns_list.append(column);
+                    
+                    if (std.meta.activeTag(self.current_token) == .Comma) {
+                        try self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                
+                try self.expect(.RightParen);
+                
+                return ast.TableConstraint{
+                    .Unique = ast.UniqueConstraint{
+                        .columns = try columns_list.toOwnedSlice(),
+                    }
+                };
+            },
+            .Primary => {
+                try self.advance(); // consume PRIMARY
+                try self.expect(.Key); // expect KEY
+                try self.expect(.LeftParen);
+                
+                var columns_list = std.ArrayList([]const u8).init(self.allocator);
+                defer columns_list.deinit();
+                
+                while (true) {
+                    const column = try self.expectIdentifier();
+                    try columns_list.append(column);
+                    
+                    if (std.meta.activeTag(self.current_token) == .Comma) {
+                        try self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                
+                try self.expect(.RightParen);
+                
+                return ast.TableConstraint{
+                    .PrimaryKey = ast.PrimaryKeyConstraint{
+                        .columns = try columns_list.toOwnedSlice(),
+                    }
+                };
+            },
+            .Check => {
+                try self.advance(); // consume CHECK
+                try self.expect(.LeftParen);
+                const condition = try self.parseCondition();
+                try self.expect(.RightParen);
+                
+                return ast.TableConstraint{
+                    .Check = ast.CheckConstraint{
+                        .condition = condition,
+                    }
+                };
+            },
+            else => error.UnexpectedToken,
+        };
     }
 
     /// Clean up parser

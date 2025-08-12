@@ -119,6 +119,7 @@ pub const ConflictResolution = enum {
 pub const CreateTableStatement = struct {
     table_name: []const u8,
     columns: []ColumnDefinition,
+    table_constraints: []TableConstraint,
     if_not_exists: bool,
 
     pub fn deinit(self: *CreateTableStatement, allocator: std.mem.Allocator) void {
@@ -131,6 +132,11 @@ pub const CreateTableStatement = struct {
             allocator.free(column.constraints);
         }
         allocator.free(self.columns);
+        
+        for (self.table_constraints) |constraint| {
+            constraint.deinit(allocator);
+        }
+        allocator.free(self.table_constraints);
     }
 };
 
@@ -434,12 +440,16 @@ pub const SortDirection = enum {
 
 /// Foreign key constraint
 pub const ForeignKeyConstraint = struct {
+    column: ?[]const u8, // null for column-level, set for table-level
     reference_table: []const u8,
     reference_column: []const u8,
     on_delete: ?ForeignKeyAction,
     on_update: ?ForeignKeyAction,
     
     pub fn deinit(self: ForeignKeyConstraint, allocator: std.mem.Allocator) void {
+        if (self.column) |col| {
+            allocator.free(col);
+        }
         allocator.free(self.reference_table);
         allocator.free(self.reference_column);
     }
@@ -461,6 +471,47 @@ pub const CheckConstraint = struct {
         _ = self;
         _ = allocator;
         // Condition cleanup handled by parent
+    }
+};
+
+/// Table-level constraints
+pub const TableConstraint = union(enum) {
+    ForeignKey: ForeignKeyConstraint,
+    Unique: UniqueConstraint,
+    Check: CheckConstraint,
+    PrimaryKey: PrimaryKeyConstraint,
+    
+    pub fn deinit(self: TableConstraint, allocator: std.mem.Allocator) void {
+        switch (self) {
+            .ForeignKey => |fk| fk.deinit(allocator),
+            .Unique => |unique| unique.deinit(allocator),
+            .Check => |check| check.deinit(allocator),
+            .PrimaryKey => |pk| pk.deinit(allocator),
+        }
+    }
+};
+
+/// Multi-column unique constraint
+pub const UniqueConstraint = struct {
+    columns: [][]const u8,
+    
+    pub fn deinit(self: UniqueConstraint, allocator: std.mem.Allocator) void {
+        for (self.columns) |column| {
+            allocator.free(column);
+        }
+        allocator.free(self.columns);
+    }
+};
+
+/// Multi-column primary key constraint
+pub const PrimaryKeyConstraint = struct {
+    columns: [][]const u8,
+    
+    pub fn deinit(self: PrimaryKeyConstraint, allocator: std.mem.Allocator) void {
+        for (self.columns) |column| {
+            allocator.free(column);
+        }
+        allocator.free(self.columns);
     }
 };
 
