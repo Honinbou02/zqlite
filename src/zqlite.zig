@@ -67,7 +67,7 @@ pub const transport = struct {
 pub const advanced_indexes = @import("indexing/advanced_indexes.zig");
 
 // Version and metadata
-pub const version = "1.2.0";
+pub const version = "1.2.1";
 pub const build_info = "zqlite " ++ version ++ " - Next-generation cryptographic database";
 
 // Main API functions
@@ -88,7 +88,7 @@ pub fn advancedPrint() !void {
 
 // Tests
 test "zqlite version info" {
-    try std.testing.expect(std.mem.eql(u8, version, "1.2.0"));
+    try std.testing.expect(std.mem.eql(u8, version, "1.2.1"));
 }
 
 test "build info contains version" {
