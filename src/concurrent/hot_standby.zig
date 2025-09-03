@@ -226,7 +226,7 @@ pub const HotStandby = struct {
                 return error.TransactionTimeout;
             }
             
-            std.time.sleep(100 * std.time.ns_per_ms);
+            std.Thread.sleep(100 * std.time.ns_per_ms);
         }
     }
     
