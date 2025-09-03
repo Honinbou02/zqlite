@@ -188,7 +188,7 @@ pub const WalletStorage = struct {
     }
     
     pub fn listWallets(self: *Self) ![]WalletInfo {
-        var wallet_infos = std.ArrayList(WalletInfo).init(self.allocator);
+        var wallet_infos = std.array_list.Managed(WalletInfo).init(self.allocator);
         defer wallet_infos.deinit();
         
         var iterator = self.wallets.iterator();

@@ -280,7 +280,7 @@ pub const ConnectionInfo = struct {
 pub const ResultSet = struct {
     allocator: std.mem.Allocator,
     connection: *Connection,
-    rows: std.ArrayList(storage.Row),
+    rows: std.array_list.Managed(storage.Row),
     current_index: usize,
     column_names: [][]const u8,
 

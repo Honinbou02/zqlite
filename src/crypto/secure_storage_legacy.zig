@@ -519,7 +519,7 @@ pub const SecureValue = union(enum) {
 
     pub fn encrypt(value: storage.Value, crypto: *CryptoEngine) !SecureValue {
         // Convert storage value to bytes for encryption
-        var buffer = std.ArrayList(u8).init(crypto.allocator);
+        var buffer = std.array_list.Managed(u8).init(crypto.allocator);
         defer buffer.deinit();
 
         switch (value) {
@@ -622,7 +622,7 @@ pub const SecureTable = struct {
 pub const CryptoTransactionLog = struct {
     allocator: std.mem.Allocator,
     crypto_engine: *CryptoEngine,
-    entries: std.ArrayList(LogEntry),
+    entries: std.array_list.Managed(LogEntry),
     chain_key: [32]u8,
 
     const LogEntry = struct {
@@ -644,7 +644,7 @@ pub const CryptoTransactionLog = struct {
         return Self{
             .allocator = allocator,
             .crypto_engine = crypto_engine,
-            .entries = std.ArrayList(LogEntry).init(allocator),
+            .entries = std.array_list.Managed(LogEntry).init(allocator),
             .chain_key = chain_key,
         };
     }
@@ -661,7 +661,7 @@ pub const CryptoTransactionLog = struct {
             std.mem.zeroes([32]u8);
 
         // Create signing data
-        var signing_data = std.ArrayList(u8).init(self.allocator);
+        var signing_data = std.array_list.Managed(u8).init(self.allocator);
         defer signing_data.deinit();
         try signing_data.appendSlice(std.mem.asBytes(&transaction_id));
         try signing_data.appendSlice(table_name);
@@ -689,7 +689,7 @@ pub const CryptoTransactionLog = struct {
     pub fn verifyIntegrity(self: *Self) !bool {
         for (self.entries.items, 0..) |entry, i| {
             // Reconstruct signing data
-            var signing_data = std.ArrayList(u8).init(self.allocator);
+            var signing_data = std.array_list.Managed(u8).init(self.allocator);
             defer signing_data.deinit();
             try signing_data.appendSlice(std.mem.asBytes(&entry.transaction_id));
             try signing_data.appendSlice(entry.table_name);

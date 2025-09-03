@@ -11,11 +11,13 @@ pub fn build(b: *std.Build) void {
     });
     
     // Create the zqlite library - now with only zsync dependency!
-    const lib = b.addStaticLibrary(.{
+    const lib = b.addLibrary(.{
         .name = "zqlite",
-        .root_source_file = b.path("src/zqlite.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/zqlite.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     // Add zsync dependency to library
@@ -37,9 +39,11 @@ pub fn build(b: *std.Build) void {
     // Create the zqlite executable
     const exe = b.addExecutable(.{
         .name = "zqlite",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     // Link the library to the executable
@@ -61,9 +65,11 @@ pub fn build(b: *std.Build) void {
 
     // Create test step
     const lib_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/zqlite.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/zqlite.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     
     // Add zsync dependency to tests
@@ -72,9 +78,11 @@ pub fn build(b: *std.Build) void {
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
     const exe_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     exe_unit_tests.root_module.addImport("zqlite", lib.root_module);
@@ -99,9 +107,11 @@ fn createBasicExample(b: *std.Build, name: []const u8, lib: *std.Build.Step.Comp
     
     const example = b.addExecutable(.{
         .name = name,
-        .root_source_file = b.path(b.fmt("examples/{s}.zig", .{name})),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(b.fmt("examples/{s}.zig", .{name})),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     example.root_module.addImport("zqlite", lib.root_module);

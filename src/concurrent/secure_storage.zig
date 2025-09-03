@@ -29,7 +29,14 @@ pub const CryptoEngine = struct {
 
     pub fn deinit(self: *Self) void {
         // Securely clear the key
-        std.crypto.utils.secureZero(u8, &self.key);
+        secureZero(&self.key);
+    }
+    
+    /// Securely zero memory to prevent sensitive data from remaining
+    fn secureZero(buffer: []u8) void {
+        @memset(buffer, 0);
+        // Force compiler not to optimize this away
+        std.mem.doNotOptimizeAway(buffer.ptr);
     }
 
     pub fn encrypt(self: *Self, data: []const u8) ![]u8 {

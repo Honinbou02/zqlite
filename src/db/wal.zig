@@ -6,7 +6,7 @@ pub const WriteAheadLog = struct {
     file: std.fs.File,
     is_transaction_active: bool,
     transaction_id: u64,
-    log_entries: std.ArrayList(LogEntry),
+    log_entries: std.array_list.Managed(LogEntry),
 
     const Self = @This();
 
@@ -16,7 +16,7 @@ pub const WriteAheadLog = struct {
         wal.allocator = allocator;
         wal.is_transaction_active = false;
         wal.transaction_id = 0;
-        wal.log_entries = std.ArrayList(LogEntry).init(allocator);
+        wal.log_entries = std.array_list.Managed(LogEntry).init(allocator);
 
         // Create WAL file path
         const wal_path = try std.fmt.allocPrint(allocator, "{s}.wal", .{db_path});
@@ -145,10 +145,10 @@ pub const WriteAheadLog = struct {
             const bytes_read = try self.file.read(buffer[0..]);
             if (bytes_read == 0) break;
 
-            var stream = std.io.fixedBufferStream(buffer[0..bytes_read]);
+            var buffer_pos: usize = 0;
 
-            while (stream.pos < bytes_read) {
-                const entry = LogEntry.deserialize(self.allocator, buffer[stream.pos..]) catch break;
+            while (buffer_pos < bytes_read) {
+                const entry = LogEntry.deserialize(self.allocator, buffer[buffer_pos..]) catch break;
                 defer {
                     self.allocator.free(entry.old_data);
                     self.allocator.free(entry.new_data);
@@ -163,7 +163,7 @@ pub const WriteAheadLog = struct {
 
                 // Skip to next entry
                 const entry_size = try self.getEntrySize(&entry);
-                stream.pos += entry_size;
+                buffer_pos += entry_size;
             }
 
             position += bytes_read;
@@ -189,7 +189,7 @@ pub const WriteAheadLog = struct {
         var buffer: [8192]u8 = undefined;
         var position: u64 = 0;
         var max_transaction_id: u64 = 0;
-        var incomplete_transactions = std.ArrayList(u64).init(self.allocator);
+        var incomplete_transactions = std.array_list.Managed(u64).init(self.allocator);
         defer incomplete_transactions.deinit();
 
         // First pass: find incomplete transactions
@@ -198,10 +198,10 @@ pub const WriteAheadLog = struct {
             const bytes_read = try self.file.read(buffer[0..]);
             if (bytes_read == 0) break;
 
-            var stream = std.io.fixedBufferStream(buffer[0..bytes_read]);
+            var buffer_pos: usize = 0;
 
-            while (stream.pos < bytes_read) {
-                const entry = LogEntry.deserialize(self.allocator, buffer[stream.pos..]) catch break;
+            while (buffer_pos < bytes_read) {
+                const entry = LogEntry.deserialize(self.allocator, buffer[buffer_pos..]) catch break;
                 defer {
                     self.allocator.free(entry.old_data);
                     self.allocator.free(entry.new_data);
@@ -228,7 +228,7 @@ pub const WriteAheadLog = struct {
                 }
 
                 const entry_size = try self.getEntrySize(&entry);
-                stream.pos += entry_size;
+                buffer_pos += entry_size;
             }
 
             position += bytes_read;
@@ -295,47 +295,75 @@ const LogEntry = struct {
 
     /// Serialize log entry to bytes
     fn serialize(self: LogEntry, buffer: []u8) ![]const u8 {
-        var stream = std.io.fixedBufferStream(buffer);
-        const writer = stream.writer();
-
+        var pos: usize = 0;
+        
         // Write header
-        try writer.writeInt(u8, @intFromEnum(self.entry_type), .little);
-        try writer.writeInt(u64, self.transaction_id, .little);
-        try writer.writeInt(u32, self.page_id, .little);
-        try writer.writeInt(u32, self.offset, .little);
+        buffer[pos] = @intFromEnum(self.entry_type);
+        pos += 1;
+        
+        std.mem.writeInt(u64, buffer[pos..][0..8], self.transaction_id, .little);
+        pos += 8;
+        
+        std.mem.writeInt(u32, buffer[pos..][0..4], self.page_id, .little);
+        pos += 4;
+        
+        std.mem.writeInt(u32, buffer[pos..][0..4], self.offset, .little);
+        pos += 4;
 
         // Write data lengths
-        try writer.writeInt(u32, @intCast(self.old_data.len), .little);
-        try writer.writeInt(u32, @intCast(self.new_data.len), .little);
+        std.mem.writeInt(u32, buffer[pos..][0..4], @intCast(self.old_data.len), .little);
+        pos += 4;
+        
+        std.mem.writeInt(u32, buffer[pos..][0..4], @intCast(self.new_data.len), .little);
+        pos += 4;
 
         // Write data
-        try writer.writeAll(self.old_data);
-        try writer.writeAll(self.new_data);
+        @memcpy(buffer[pos..][0..self.old_data.len], self.old_data);
+        pos += self.old_data.len;
+        
+        @memcpy(buffer[pos..][0..self.new_data.len], self.new_data);
+        pos += self.new_data.len;
 
-        return buffer[0..stream.pos];
+        return buffer[0..pos];
     }
 
     /// Deserialize log entry from bytes
     fn deserialize(allocator: std.mem.Allocator, buffer: []const u8) !LogEntry {
-        var stream = std.io.fixedBufferStream(buffer);
-        const reader = stream.reader();
+        if (buffer.len < 25) return error.BufferTooSmall;
+        
+        var pos: usize = 0;
 
         // Read header
-        const entry_type: LogEntryType = @enumFromInt(try reader.readInt(u8, .little));
-        const transaction_id = try reader.readInt(u64, .little);
-        const page_id = try reader.readInt(u32, .little);
-        const offset = try reader.readInt(u32, .little);
+        const entry_type: LogEntryType = @enumFromInt(buffer[pos]);
+        pos += 1;
+        
+        const transaction_id = std.mem.readInt(u64, buffer[pos..][0..8], .little);
+        pos += 8;
+        
+        const page_id = std.mem.readInt(u32, buffer[pos..][0..4], .little);
+        pos += 4;
+        
+        const offset = std.mem.readInt(u32, buffer[pos..][0..4], .little);
+        pos += 4;
 
         // Read data lengths
-        const old_data_len = try reader.readInt(u32, .little);
-        const new_data_len = try reader.readInt(u32, .little);
+        const old_data_len = std.mem.readInt(u32, buffer[pos..][0..4], .little);
+        pos += 4;
+        
+        const new_data_len = std.mem.readInt(u32, buffer[pos..][0..4], .little);
+        pos += 4;
 
+        // Check buffer has enough data
+        if (buffer.len < pos + old_data_len + new_data_len) return error.BufferTooSmall;
+        
         // Read data
         const old_data = try allocator.alloc(u8, old_data_len);
         const new_data = try allocator.alloc(u8, new_data_len);
 
-        _ = try reader.readAll(old_data);
-        _ = try reader.readAll(new_data);
+        @memcpy(old_data, buffer[pos..][0..old_data_len]);
+        pos += old_data_len;
+        
+        @memcpy(new_data, buffer[pos..][0..new_data_len]);
 
         return LogEntry{
             .entry_type = entry_type,

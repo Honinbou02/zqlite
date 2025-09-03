@@ -59,7 +59,7 @@ pub const Parser = struct {
         try self.expect(.Select);
 
         // Parse columns
-        var columns = std.ArrayList(ast.Column).init(self.allocator);
+        var columns = std.array_list.Managed(ast.Column).init(self.allocator);
         defer columns.deinit();
 
         if (std.meta.activeTag(self.current_token) == .Asterisk) {
@@ -87,7 +87,7 @@ pub const Parser = struct {
         const table_name = try self.expectIdentifier();
 
         // Parse optional JOIN clauses
-        var joins = std.ArrayList(ast.JoinClause).init(self.allocator);
+        var joins = std.array_list.Managed(ast.JoinClause).init(self.allocator);
         defer joins.deinit();
         
         while (true) {
@@ -109,7 +109,7 @@ pub const Parser = struct {
             try self.advance();
             try self.expect(.By);
             
-            var group_columns = std.ArrayList([]const u8).init(self.allocator);
+            var group_columns = std.array_list.Managed([]const u8).init(self.allocator);
             defer group_columns.deinit();
             
             while (true) {
@@ -139,7 +139,7 @@ pub const Parser = struct {
             try self.advance();
             try self.expect(.By);
             
-            var order_clauses = std.ArrayList(ast.OrderByClause).init(self.allocator);
+            var order_clauses = std.array_list.Managed(ast.OrderByClause).init(self.allocator);
             defer order_clauses.deinit();
             
             while (true) {
@@ -284,7 +284,7 @@ pub const Parser = struct {
         var columns: ?[][]const u8 = null;
         if (std.meta.activeTag(self.current_token) == .LeftParen) {
             try self.advance();
-            var column_list = std.ArrayList([]const u8).init(self.allocator);
+            var column_list = std.array_list.Managed([]const u8).init(self.allocator);
             defer column_list.deinit();
 
             while (true) {
@@ -305,14 +305,14 @@ pub const Parser = struct {
         // Parse VALUES clause
         try self.expect(.Values);
 
-        var values = std.ArrayList([]ast.Value).init(self.allocator);
+        var values = std.array_list.Managed([]ast.Value).init(self.allocator);
         defer values.deinit();
 
         // Parse value rows
         while (true) {
             try self.expect(.LeftParen);
 
-            var row = std.ArrayList(ast.Value).init(self.allocator);
+            var row = std.array_list.Managed(ast.Value).init(self.allocator);
             defer row.deinit();
 
             while (true) {
@@ -460,7 +460,7 @@ pub const Parser = struct {
         
         try self.expect(.LeftParen);
         
-        var columns = std.ArrayList([]const u8).init(self.allocator);
+        var columns = std.array_list.Managed([]const u8).init(self.allocator);
         defer columns.deinit();
         
         while (true) {
@@ -523,10 +523,10 @@ pub const Parser = struct {
 
         try self.expect(.LeftParen);
 
-        var columns = std.ArrayList(ast.ColumnDefinition).init(self.allocator);
+        var columns = std.array_list.Managed(ast.ColumnDefinition).init(self.allocator);
         defer columns.deinit();
         
-        var table_constraints = std.ArrayList(ast.TableConstraint).init(self.allocator);
+        var table_constraints = std.array_list.Managed(ast.TableConstraint).init(self.allocator);
         defer table_constraints.deinit();
 
         while (true) {
@@ -565,7 +565,7 @@ pub const Parser = struct {
         const table_name = try self.expectIdentifier();
         try self.expect(.Set);
 
-        var assignments = std.ArrayList(ast.Assignment).init(self.allocator);
+        var assignments = std.array_list.Managed(ast.Assignment).init(self.allocator);
         defer assignments.deinit();
 
         while (true) {
@@ -642,7 +642,7 @@ pub const Parser = struct {
         const name = try self.expectIdentifier();
         const data_type = try self.parseDataType();
 
-        var constraints = std.ArrayList(ast.ColumnConstraint).init(self.allocator);
+        var constraints = std.array_list.Managed(ast.ColumnConstraint).init(self.allocator);
         defer constraints.deinit();
 
         // Parse constraints
@@ -956,7 +956,7 @@ pub const Parser = struct {
         
         try self.expect(.LeftParen);
         
-        var arguments = std.ArrayList(ast.FunctionArgument).init(self.allocator);
+        var arguments = std.array_list.Managed(ast.FunctionArgument).init(self.allocator);
         defer arguments.deinit();
         
         // Parse arguments
@@ -1180,7 +1180,7 @@ pub const Parser = struct {
                 try self.advance(); // consume UNIQUE
                 try self.expect(.LeftParen);
                 
-                var columns_list = std.ArrayList([]const u8).init(self.allocator);
+                var columns_list = std.array_list.Managed([]const u8).init(self.allocator);
                 defer columns_list.deinit();
                 
                 while (true) {
@@ -1207,7 +1207,7 @@ pub const Parser = struct {
                 try self.expect(.Key); // expect KEY
                 try self.expect(.LeftParen);
                 
-                var columns_list = std.ArrayList([]const u8).init(self.allocator);
+                var columns_list = std.array_list.Managed([]const u8).init(self.allocator);
                 defer columns_list.deinit();
                 
                 while (true) {

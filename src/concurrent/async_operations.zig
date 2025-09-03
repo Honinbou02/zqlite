@@ -189,14 +189,14 @@ pub const AsyncDatabase = struct {
 /// Connection pool for managing database connections
 const ConnectionPool = struct {
     allocator: std.mem.Allocator,
-    connections: std.ArrayList(*connection.Connection),
+    connections: std.array_list.Managed(*connection.Connection),
     available: std.Thread.Semaphore,
     mutex: std.Thread.Mutex,
 
     const Self = @This();
 
     pub fn init(allocator: std.mem.Allocator, db_path: []const u8, pool_size: u32) !Self {
-        var connections = std.ArrayList(*connection.Connection).init(allocator);
+        var connections = std.array_list.Managed(*connection.Connection).init(allocator);
 
         // Create connections
         for (0..pool_size) |_| {

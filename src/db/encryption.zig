@@ -77,8 +77,15 @@ pub const Encryption = struct {
     /// Securely clear sensitive data from memory
     pub fn deinit(self: *Self) void {
         // Zero out sensitive data
-        crypto.utils.secureZero(u8, &self.key);
-        crypto.utils.secureZero(u8, &self.salt);
+        secureZero(&self.key);
+        secureZero(&self.salt);
+    }
+    
+    /// Securely zero memory to prevent sensitive data from remaining
+    fn secureZero(buffer: []u8) void {
+        @memset(buffer, 0);
+        // Force compiler not to optimize this away
+        std.mem.doNotOptimizeAway(buffer.ptr);
     }
 
     /// Encrypt data

@@ -27,7 +27,7 @@ pub const VirtualMachine = struct {
     /// Execute a query plan
     pub fn execute(self: *Self, plan: *planner.ExecutionPlan) !ExecutionResult {
         var result = ExecutionResult{
-            .rows = std.ArrayList(storage.Row).init(self.allocator),
+            .rows = std.array_list.Managed(storage.Row).init(self.allocator),
             .affected_rows = 0,
         };
 
@@ -100,7 +100,7 @@ pub const VirtualMachine = struct {
 
     /// Execute filter (WHERE clause)
     fn executeFilter(self: *Self, filter: *planner.FilterStep, result: *ExecutionResult) !void {
-        var filtered_rows = std.ArrayList(storage.Row).init(self.allocator);
+        var filtered_rows = std.array_list.Managed(storage.Row).init(self.allocator);
 
         for (result.rows.items) |row| {
             if (try self.evaluateCondition(&filter.condition, &row)) {
@@ -120,10 +120,10 @@ pub const VirtualMachine = struct {
         }
 
         // Create projected rows with only selected columns
-        var projected_rows = std.ArrayList(storage.Row).init(self.allocator);
+        var projected_rows = std.array_list.Managed(storage.Row).init(self.allocator);
 
         for (result.rows.items) |original_row| {
-            var projected_values = std.ArrayList(storage.Value).init(self.allocator);
+            var projected_values = std.array_list.Managed(storage.Value).init(self.allocator);
 
             // For now, we'll assume column order matches project.columns order
             // In a real implementation, we'd need column metadata from the table schema
@@ -312,7 +312,7 @@ pub const VirtualMachine = struct {
 
         if (start > 0 or end < result.rows.items.len) {
             // Create new slice with limited rows
-            var limited_rows = std.ArrayList(storage.Row).init(self.allocator);
+            var limited_rows = std.array_list.Managed(storage.Row).init(self.allocator);
             for (result.rows.items[start..end]) |row| {
                 try limited_rows.append(row);
             }
@@ -407,7 +407,7 @@ pub const VirtualMachine = struct {
         }
 
         var updated_count: u32 = 0;
-        var updated_rows = std.ArrayList(storage.Row).init(self.allocator);
+        var updated_rows = std.array_list.Managed(storage.Row).init(self.allocator);
         defer {
             for (updated_rows.items) |row| {
                 for (row.values) |value| {
@@ -500,7 +500,7 @@ pub const VirtualMachine = struct {
         }
 
         var deleted_count: u32 = 0;
-        var surviving_rows = std.ArrayList(storage.Row).init(self.allocator);
+        var surviving_rows = std.array_list.Managed(storage.Row).init(self.allocator);
         defer {
             for (surviving_rows.items) |row| {
                 for (row.values) |value| {
@@ -821,7 +821,7 @@ pub const VirtualMachine = struct {
         }
 
         // Build hash table from smaller table (right table for now)
-        var hash_map = std.AutoHashMap(u64, std.ArrayList(storage.Row)).init(self.allocator);
+        var hash_map = std.AutoHashMap(u64, std.array_list.Managed(storage.Row)).init(self.allocator);
         defer {
             var iterator = hash_map.iterator();
             while (iterator.next()) |entry| {
@@ -956,7 +956,7 @@ pub const VirtualMachine = struct {
 
 /// Result of query execution
 pub const ExecutionResult = struct {
-    rows: std.ArrayList(storage.Row),
+    rows: std.array_list.Managed(storage.Row),
     affected_rows: u32,
 
     pub fn deinit(self: *ExecutionResult, allocator: std.mem.Allocator) void {

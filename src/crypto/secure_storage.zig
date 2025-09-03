@@ -324,7 +324,7 @@ pub const BackendInfo = struct {
 /// Simple transaction log for crypto operations
 pub const CryptoTransactionLog = struct {
     allocator: std.mem.Allocator,
-    transactions: std.ArrayList(TransactionEntry),
+    transactions: std.array_list.Managed(TransactionEntry),
 
     const TransactionEntry = struct {
         timestamp: i64,
@@ -337,7 +337,7 @@ pub const CryptoTransactionLog = struct {
     pub fn init(allocator: std.mem.Allocator) Self {
         return Self{
             .allocator = allocator,
-            .transactions = std.ArrayList(TransactionEntry).init(allocator),
+            .transactions = std.array_list.Managed(TransactionEntry).init(allocator),
         };
     }
 

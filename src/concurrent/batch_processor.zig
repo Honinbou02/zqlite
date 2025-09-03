@@ -206,7 +206,7 @@ pub const BatchProcessor = struct {
     /// Serialize a row for transport
     fn serializeRow(self: *Self, row: storage.Row) ![]u8 {
         // Simple serialization - in production this would be more efficient
-        var list = std.ArrayList(u8).init(self.allocator);
+        var list = std.array_list.Managed(u8).init(self.allocator);
         defer list.deinit();
         
         // Write number of values
@@ -315,10 +315,10 @@ const VectorizedOperations = struct {
     
     /// Preprocess operations for vectorization
     pub fn preprocess(self: *Self, operations: []const BatchOperation) !VectorizedBatch {
-        var groups = std.ArrayList(OperationGroup).init(self.allocator);
+        var groups = std.array_list.Managed(OperationGroup).init(self.allocator);
         var current_type: ?OperationType = null;
         var current_group: ?OperationGroup = null;
-        var current_ops = std.ArrayList(BatchOperation).init(self.allocator);
+        var current_ops = std.array_list.Managed(BatchOperation).init(self.allocator);
         
         for (operations, 0..) |op, i| {
             if (current_type == null or current_type.? != op.operation_type) {
@@ -336,7 +336,7 @@ const VectorizedOperations = struct {
                     .start_index = i,
                     .operations = &[_]BatchOperation{},
                 };
-                current_ops = std.ArrayList(BatchOperation).init(self.allocator);
+                current_ops = std.array_list.Managed(BatchOperation).init(self.allocator);
             }
             
             try current_ops.append(op);
@@ -405,7 +405,7 @@ pub const BatchResult = struct {
 
 /// Vectorized batch for processing
 const VectorizedBatch = struct {
-    groups: std.ArrayList(OperationGroup),
+    groups: std.array_list.Managed(OperationGroup),
     
     pub fn deinit(self: *VectorizedBatch, allocator: std.mem.Allocator) void {
         for (self.groups.items) |group| {

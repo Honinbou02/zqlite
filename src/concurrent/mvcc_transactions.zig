@@ -12,7 +12,7 @@ pub const MVCCTransactionManager = struct {
     global_lock: std.Thread.RwLock,
     storage_engine: *storage.StorageEngine,
     crypto_engine: ?*crypto.CryptoEngine,
-    commit_log: std.ArrayList(CommitLogEntry),
+    commit_log: std.array_list.Managed(CommitLogEntry),
     deadlock_detector: DeadlockDetector,
 
     const Self = @This();
@@ -25,7 +25,7 @@ pub const MVCCTransactionManager = struct {
             .global_lock = std.Thread.RwLock{},
             .storage_engine = storage_engine,
             .crypto_engine = crypto_engine,
-            .commit_log = std.ArrayList(CommitLogEntry).init(allocator),
+            .commit_log = std.array_list.Managed(CommitLogEntry).init(allocator),
             .deadlock_detector = DeadlockDetector.init(allocator),
         };
     }
@@ -44,7 +44,7 @@ pub const MVCCTransactionManager = struct {
             .state = .Active,
             .read_set = std.HashMap(RowKey, RowVersion).init(self.allocator),
             .write_set = std.HashMap(RowKey, RowValue).init(self.allocator),
-            .locks = std.ArrayList(LockInfo).init(self.allocator),
+            .locks = std.array_list.Managed(LockInfo).init(self.allocator),
             .allocator = self.allocator,
             .created_at = std.time.timestamp(),
         };
@@ -410,7 +410,7 @@ pub const Transaction = struct {
     state: TransactionState,
     read_set: std.HashMap(RowKey, RowVersion),
     write_set: std.HashMap(RowKey, RowValue),
-    locks: std.ArrayList(LockInfo),
+    locks: std.array_list.Managed(LockInfo),
     allocator: std.mem.Allocator,
     created_at: i64,
 
@@ -457,7 +457,7 @@ pub const DeadlockDetector = struct {
 
     pub fn addTransaction(self: *Self, transaction_id: TransactionId) !void {
         if (!self.wait_for_graph.contains(transaction_id)) {
-            try self.wait_for_graph.put(transaction_id, std.ArrayList(TransactionId).init(self.allocator));
+            try self.wait_for_graph.put(transaction_id, std.array_list.Managed(TransactionId).init(self.allocator));
         }
     }
 

@@ -55,7 +55,7 @@ pub const BTree = struct {
 
     /// Select all rows (for table scans)
     pub fn selectAll(self: *Self, allocator: std.mem.Allocator) ![]storage.Row {
-        var results = std.ArrayList(storage.Row).init(allocator);
+        var results = std.array_list.Managed(storage.Row).init(allocator);
         try self.collectAllLeafValues(self.root_page, &results);
         return results.toOwnedSlice();
     }
@@ -173,7 +173,7 @@ pub const BTree = struct {
     }
 
     /// Collect all values from leaf nodes (for table scans)
-    fn collectAllLeafValues(self: *Self, page_id: u32, results: *std.ArrayList(storage.Row)) !void {
+    fn collectAllLeafValues(self: *Self, page_id: u32, results: *std.array_list.Managed(storage.Row)) !void {
         var node = try self.readNode(page_id);
         defer node.deinit(self.allocator);
 
@@ -222,7 +222,7 @@ pub const BTree = struct {
     }
 
     /// Collect values that match (or don't match) a predicate
-    fn collectMatchingLeafValues(self: *Self, node: *Node, results: *std.ArrayList(storage.Row), allocator: std.mem.Allocator, predicate: fn (*const storage.Row) bool, should_match: bool) !void {
+    fn collectMatchingLeafValues(self: *Self, node: *Node, results: *std.array_list.Managed(storage.Row), allocator: std.mem.Allocator, predicate: fn (*const storage.Row) bool, should_match: bool) !void {
         if (node.is_leaf) {
             for (node.values[0..node.key_count]) |value| {
                 const matches = predicate(&value);
@@ -369,7 +369,7 @@ pub const BTree = struct {
     /// Write a node to storage
     fn writeNode(self: *Self, page_id: u32, node: *Node) !void {
         const page = try self.pager.getPage(page_id);
-        try node.serialize(page.data);
+        _ = try node.serialize(page.data);
         try self.pager.markDirty(page_id);
     }
 
@@ -380,7 +380,7 @@ pub const BTree = struct {
 };
 
 /// B-tree node
-const Node = struct {
+pub const Node = struct {
     is_leaf: bool,
     key_count: u32,
     keys: []u64,
@@ -476,80 +476,112 @@ const Node = struct {
     }
 
     /// Serialize node to bytes
-    pub fn serialize(self: *const Self, buffer: []u8) !void {
-        var stream = std.io.fixedBufferStream(buffer);
-        const writer = stream.writer();
+    pub fn serialize(self: *const Self, buffer: []u8) !usize {
+        var pos: usize = 0;
 
         // Write header
-        try writer.writeInt(u8, if (self.is_leaf) 1 else 0, .little);
-        try writer.writeInt(u32, self.key_count, .little);
-        try writer.writeInt(u32, self.order, .little);
+        buffer[pos] = if (self.is_leaf) 1 else 0;
+        pos += 1;
+        
+        std.mem.writeInt(u32, buffer[pos..][0..4], self.key_count, .little);
+        pos += 4;
+        
+        std.mem.writeInt(u32, buffer[pos..][0..4], self.order, .little);
+        pos += 4;
 
         // Write keys
         for (self.keys[0..self.key_count]) |key| {
-            try writer.writeInt(u64, key, .little);
+            std.mem.writeInt(u64, buffer[pos..][0..8], key, .little);
+            pos += 8;
         }
 
         if (self.is_leaf) {
             // Write values for leaf nodes
             for (self.values[0..self.key_count]) |value| {
-                try self.serializeValue(writer, &value);
+                pos += try self.serializeValue(buffer[pos..], &value);
             }
         } else {
             // Write child pointers for internal nodes
             for (self.children[0 .. self.key_count + 1]) |child| {
-                try writer.writeInt(u32, child, .little);
+                std.mem.writeInt(u32, buffer[pos..][0..4], child, .little);
+                pos += 4;
             }
         }
+        
+        return pos;
     }
 
     /// Serialize a single value
-    fn serializeValue(self: *const Self, writer: anytype, value: *const storage.Row) !void {
+    fn serializeValue(self: *const Self, buffer: []u8, value: *const storage.Row) !usize {
         _ = self;
+        var pos: usize = 0;
+        
         // Write number of values in row
-        try writer.writeInt(u32, @intCast(value.values.len), .little);
+        std.mem.writeInt(u32, buffer[pos..][0..4], @intCast(value.values.len), .little);
+        pos += 4;
 
         // Write each value
         for (value.values) |val| {
             switch (val) {
                 .Integer => |i| {
-                    try writer.writeInt(u8, 1, .little); // Type tag
-                    try writer.writeInt(i64, i, .little);
+                    buffer[pos] = 1; // Type tag
+                    pos += 1;
+                    std.mem.writeInt(i64, buffer[pos..][0..8], i, .little);
+                    pos += 8;
                 },
                 .Real => |r| {
-                    try writer.writeInt(u8, 2, .little); // Type tag
-                    try writer.writeInt(u64, @bitCast(r), .little);
+                    buffer[pos] = 2; // Type tag
+                    pos += 1;
+                    std.mem.writeInt(u64, buffer[pos..][0..8], @bitCast(r), .little);
+                    pos += 8;
                 },
                 .Text => |t| {
-                    try writer.writeInt(u8, 3, .little); // Type tag
-                    try writer.writeInt(u32, @intCast(t.len), .little);
-                    try writer.writeAll(t);
+                    buffer[pos] = 3; // Type tag
+                    pos += 1;
+                    std.mem.writeInt(u32, buffer[pos..][0..4], @intCast(t.len), .little);
+                    pos += 4;
+                    @memcpy(buffer[pos..][0..t.len], t);
+                    pos += t.len;
                 },
                 .Blob => |b| {
-                    try writer.writeInt(u8, 4, .little); // Type tag
-                    try writer.writeInt(u32, @intCast(b.len), .little);
-                    try writer.writeAll(b);
+                    buffer[pos] = 4; // Type tag
+                    pos += 1;
+                    std.mem.writeInt(u32, buffer[pos..][0..4], @intCast(b.len), .little);
+                    pos += 4;
+                    @memcpy(buffer[pos..][0..b.len], b);
+                    pos += b.len;
                 },
                 .Null => {
-                    try writer.writeInt(u8, 0, .little); // Type tag
+                    buffer[pos] = 0; // Type tag
+                    pos += 1;
                 },
                 .Parameter => |param_index| {
-                    try writer.writeInt(u8, 5, .little); // Type tag
-                    try writer.writeInt(u32, param_index, .little);
+                    buffer[pos] = 5; // Type tag
+                    pos += 1;
+                    std.mem.writeInt(u32, buffer[pos..][0..4], param_index, .little);
+                    pos += 4;
                 },
             }
         }
+        
+        return pos;
     }
 
     /// Deserialize node from bytes
     pub fn deserialize(allocator: std.mem.Allocator, buffer: []const u8, order: u32) !Self {
-        var stream = std.io.fixedBufferStream(buffer);
-        const reader = stream.reader();
+        if (buffer.len < 9) return error.BufferTooSmall; // Minimum header size
+        
+        var pos: usize = 0;
 
         // Read header
-        const is_leaf = (try reader.readInt(u8, .little)) == 1;
-        const key_count = try reader.readInt(u32, .little);
-        const stored_order = try reader.readInt(u32, .little);
+        const is_leaf = buffer[pos] == 1;
+        pos += 1;
+        
+        const key_count = std.mem.readInt(u32, buffer[pos..][0..4], .little);
+        pos += 4;
+        
+        const stored_order = std.mem.readInt(u32, buffer[pos..][0..4], .little);
+        pos += 4;
 
         if (stored_order != order) {
             return error.OrderMismatch;
@@ -565,53 +597,100 @@ const Node = struct {
 
         // Read keys
         for (0..key_count) |i| {
-            node.keys[i] = try reader.readInt(u64, .little);
+            if (buffer.len < pos + 8) return error.BufferTooSmall;
+            node.keys[i] = std.mem.readInt(u64, buffer[pos..][0..8], .little);
+            pos += 8;
         }
 
         if (is_leaf) {
             // Read values for leaf nodes
             for (0..key_count) |i| {
-                node.values[i] = try deserializeValue(allocator, reader);
+                const value_result = try deserializeValue(allocator, buffer[pos..]);
+                node.values[i] = value_result.value;
+                pos += value_result.bytes_read;
             }
         } else {
             // Read child pointers for internal nodes
             for (0..key_count + 1) |i| {
-                node.children[i] = try reader.readInt(u32, .little);
+                if (buffer.len < pos + 4) return error.BufferTooSmall;
+                node.children[i] = std.mem.readInt(u32, buffer[pos..][0..4], .little);
+                pos += 4;
             }
         }
 
         return node;
     }
 
+    /// Result structure for deserializeValue
+    const DeserializeValueResult = struct {
+        value: storage.Row,
+        bytes_read: usize,
+    };
+    
     /// Deserialize a single value
-    fn deserializeValue(allocator: std.mem.Allocator, reader: anytype) !storage.Row {
-        const value_count = try reader.readInt(u32, .little);
+    fn deserializeValue(allocator: std.mem.Allocator, buffer: []const u8) !DeserializeValueResult {
+        if (buffer.len < 4) return error.BufferTooSmall;
+        
+        var pos: usize = 0;
+        
+        const value_count = std.mem.readInt(u32, buffer[pos..][0..4], .little);
+        pos += 4;
+        
         var values = try allocator.alloc(storage.Value, value_count);
 
         for (0..value_count) |i| {
-            const type_tag = try reader.readInt(u8, .little);
+            if (buffer.len < pos + 1) return error.BufferTooSmall;
+            const type_tag = buffer[pos];
+            pos += 1;
+            
             values[i] = switch (type_tag) {
                 0 => storage.Value.Null,
-                1 => storage.Value{ .Integer = try reader.readInt(i64, .little) },
-                2 => storage.Value{ .Real = @bitCast(try reader.readInt(u64, .little)) },
+                1 => blk: {
+                    if (buffer.len < pos + 8) return error.BufferTooSmall;
+                    const val = std.mem.readInt(i64, buffer[pos..][0..8], .little);
+                    pos += 8;
+                    break :blk storage.Value{ .Integer = val };
+                },
+                2 => blk: {
+                    if (buffer.len < pos + 8) return error.BufferTooSmall;
+                    const val = std.mem.readInt(u64, buffer[pos..][0..8], .little);
+                    pos += 8;
+                    break :blk storage.Value{ .Real = @bitCast(val) };
+                },
                 3 => blk: {
-                    const len = try reader.readInt(u32, .little);
+                    if (buffer.len < pos + 4) return error.BufferTooSmall;
+                    const len = std.mem.readInt(u32, buffer[pos..][0..4], .little);
+                    pos += 4;
+                    if (buffer.len < pos + len) return error.BufferTooSmall;
                     const text = try allocator.alloc(u8, len);
-                    _ = try reader.readAll(text);
+                    @memcpy(text, buffer[pos..][0..len]);
+                    pos += len;
                     break :blk storage.Value{ .Text = text };
                 },
                 4 => blk: {
-                    const len = try reader.readInt(u32, .little);
+                    if (buffer.len < pos + 4) return error.BufferTooSmall;
+                    const len = std.mem.readInt(u32, buffer[pos..][0..4], .little);
+                    pos += 4;
+                    if (buffer.len < pos + len) return error.BufferTooSmall;
                     const blob = try allocator.alloc(u8, len);
-                    _ = try reader.readAll(blob);
+                    @memcpy(blob, buffer[pos..][0..len]);
+                    pos += len;
                     break :blk storage.Value{ .Blob = blob };
                 },
-                5 => storage.Value{ .Parameter = try reader.readInt(u32, .little) },
+                5 => blk: {
+                    if (buffer.len < pos + 4) return error.BufferTooSmall;
+                    const param_index = std.mem.readInt(u32, buffer[pos..][0..4], .little);
+                    pos += 4;
+                    break :blk storage.Value{ .Parameter = param_index };
+                },
                 else => return error.InvalidValueType,
             };
         }
 
-        return storage.Row{ .values = values };
+        return DeserializeValueResult{
+            .value = storage.Row{ .values = values },
+            .bytes_read = pos,
+        };
     }
 
     /// Clean up node
@@ -642,7 +721,9 @@ test "btree binary search performance" {
     // Insert keys in random order
     const keys = [_]u64{ 50, 25, 75, 12, 37, 62, 87, 6, 18, 31, 43, 56, 68, 81, 93 };
     for (keys) |key| {
-        const value = storage.Row{ .values = &[_]storage.Value{storage.Value{ .Integer = @intCast(key) }} };
+        var values = try allocator.alloc(storage.Value, 1);
+        values[0] = storage.Value{ .Integer = @intCast(key) };
+        const value = storage.Row{ .values = values };
         node.insertKey(key, value);
     }
     
@@ -684,12 +765,10 @@ test "btree insert and search comprehensive" {
     // Insert test data
     const test_keys = [_]u64{ 10, 20, 5, 15, 25, 3, 7, 12, 18, 22, 30 };
     for (test_keys, 0..) |key, i| {
-        const value = storage.Row{ 
-            .values = &[_]storage.Value{
-                storage.Value{ .Integer = @intCast(key) },
-                storage.Value{ .Text = try std.fmt.allocPrint(allocator, "value_{d}", .{i}) }
-            }
-        };
+        var values = try allocator.alloc(storage.Value, 2);
+        values[0] = storage.Value{ .Integer = @intCast(key) };
+        values[1] = storage.Value{ .Text = try std.fmt.allocPrint(allocator, "value_{d}", .{i}) };
+        const value = storage.Row{ .values = values };
         try btree.insert(key, value);
     }
     

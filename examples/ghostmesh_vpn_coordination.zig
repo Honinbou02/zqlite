@@ -83,7 +83,7 @@ pub const GhostMeshServer = struct {
     crypto_engine: *zqlite.crypto.CryptoEngine,
     server_keypair: zqlite.crypto.KeyPair,
     peers: std.HashMap([32]u8, VPNPeer, std.HashMap.Sha256Context, std.hash_map.default_max_load_percentage),
-    routes: std.ArrayList(VPNRoute),
+    routes: std.array_list.Managed(VPNRoute),
 
     const Self = @This();
 

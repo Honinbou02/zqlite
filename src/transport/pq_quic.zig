@@ -6,7 +6,7 @@ pub const PQQuicTransport = struct {
     allocator: std.mem.Allocator,
     quic_crypto: QuicCrypto,
     endpoint: ?Endpoint,
-    connections: std.ArrayList(*PQConnection), // Use ArrayList instead of HashMap
+    connections: std.array_list.Managed(*PQConnection), // Use ArrayList instead of HashMap
     is_server: bool,
 
     const Self = @This();
@@ -344,12 +344,19 @@ pub const PQQuicTransport = struct {
 
         pub fn deinit(self: *PQConnection, allocator: std.mem.Allocator) void {
             if (self.pq_keys) |*keys| {
-                // Secure zero using std.crypto
-                std.crypto.utils.secureZero(u8, &keys.classical_shared);
-                std.crypto.utils.secureZero(u8, &keys.pq_shared);
-                std.crypto.utils.secureZero(u8, &keys.combined_secret);
+                // Secure zero using custom function
+                secureZero(&keys.classical_shared);
+                secureZero(&keys.pq_shared);
+                secureZero(&keys.combined_secret);
             }
             allocator.destroy(self);
+        }
+        
+        /// Securely zero memory to prevent sensitive data from remaining
+        fn secureZero(buffer: []u8) void {
+            @memset(buffer, 0);
+            // Force compiler not to optimize this away
+            std.mem.doNotOptimizeAway(buffer.ptr);
         }
     };
 
@@ -358,7 +365,7 @@ pub const PQQuicTransport = struct {
             .allocator = allocator,
             .quic_crypto = QuicCrypto.init(.TLS_ML_KEM_768_X25519_AES256_GCM_SHA384),
             .endpoint = null,
-            .connections = std.ArrayList(*PQConnection).init(allocator),
+            .connections = std.array_list.Managed(*PQConnection).init(allocator),
             .is_server = is_server,
         };
     }
@@ -495,7 +502,9 @@ pub const PQQuicTransport = struct {
         
         // Store protection key for later use (stub implementation)
         // In a real implementation, this would be used to protect 0-RTT data
-        std.crypto.utils.secureZero(u8, &protection_key);
+        // Clear protection key securely
+        @memset(&protection_key, 0);
+        std.mem.doNotOptimizeAway(&protection_key);
     }
 
     pub fn deinit(self: *Self) void {
@@ -528,7 +537,7 @@ pub const PQDatabaseTransport = struct {
     pub fn executeQuery(self: *Self, conn_id: u64, query: []const u8) ![]u8 {
         if (self.query_encryption) {
             // Encrypt query with additional protection
-            var encrypted_query = std.ArrayList(u8).init(self.transport.allocator);
+            var encrypted_query = std.array_list.Managed(u8).init(self.transport.allocator);
             defer encrypted_query.deinit();
 
             try encrypted_query.appendSlice("ENCRYPTED:");
@@ -549,7 +558,7 @@ pub const PQDatabaseTransport = struct {
         return QueryStream{
             .conn_id = conn_id,
             .transport = &self.transport,
-            .buffer = std.ArrayList(u8).init(self.transport.allocator),
+            .buffer = std.array_list.Managed(u8).init(self.transport.allocator),
         };
     }
 
@@ -562,7 +571,7 @@ pub const PQDatabaseTransport = struct {
 pub const QueryStream = struct {
     conn_id: u64,
     transport: *PQQuicTransport,
-    buffer: std.ArrayList(u8),
+    buffer: std.array_list.Managed(u8),
 
     const Self = @This();
 

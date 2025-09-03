@@ -4,8 +4,8 @@ const zqlite = @import("../zqlite.zig");
 /// Thread-safe connection pool for concurrent database access
 pub const ConnectionPool = struct {
     allocator: std.mem.Allocator,
-    connections: std.ArrayList(*zqlite.db.Connection),
-    available: std.ArrayList(bool),
+    connections: std.array_list.Managed(*zqlite.db.Connection),
+    available: std.array_list.Managed(bool),
     mutex: std.Thread.Mutex,
     condition: std.Thread.Condition,
     database_path: []const u8,
@@ -19,8 +19,8 @@ pub const ConnectionPool = struct {
         var pool = try allocator.create(Self);
         pool.* = Self{
             .allocator = allocator,
-            .connections = std.ArrayList(*zqlite.db.Connection).init(allocator),
-            .available = std.ArrayList(bool).init(allocator),
+            .connections = std.array_list.Managed(*zqlite.db.Connection).init(allocator),
+            .available = std.array_list.Managed(bool).init(allocator),
             .mutex = std.Thread.Mutex{},
             .condition = std.Thread.Condition{},
             .database_path = try allocator.dupe(u8, database_path),
