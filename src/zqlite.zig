@@ -1,5 +1,18 @@
 const std = @import("std");
 
+// New data structures for v1.2.5
+pub const OpenOptions = struct {
+    enable_async: bool = false,
+    connection_pool_size: u32 = 4,
+    enable_cache: bool = false,
+    btree_cache_size: usize = 1000,
+    plan_cache_size: usize = 100,
+    enable_sqlite_compat: bool = false,
+    enable_package_manager: bool = false,
+    enable_error_reporting: bool = false,
+    error_history_size: usize = 1000,
+};
+
 // Core database modules
 pub const db = @import("db/connection.zig");
 pub const Connection = db.Connection; // Export for convenience
@@ -63,8 +76,20 @@ else
         pub const HybridSignature = @TypeOf(null);
     };
 
-// Async database operations
+// Enhanced async database operations with zsync v0.5.4 features
 pub const async_ops = @import("concurrent/async_operations.zig");
+
+// SQLite compatibility layer
+pub const sqlite_compat = @import("sqlite_compat/sqlite_compatibility.zig");
+
+// Performance optimizations
+pub const performance = @import("performance/cache_manager.zig");
+
+// Zeppelin package manager integration
+pub const zeppelin = @import("zeppelin/package_manager.zig");
+
+// Enhanced error reporting
+pub const error_handling = @import("error_handling/enhanced_errors.zig");
 
 // Post-quantum transport (optional - v1.2.2)
 pub const transport = if (@import("builtin").is_test or @hasDecl(@import("root"), "zqlite_enable_transport"))
@@ -85,7 +110,7 @@ else
 pub const advanced_indexes = @import("indexing/advanced_indexes.zig");
 
 // Version and metadata
-pub const version = "1.2.2";
+pub const version = "1.2.5";
 pub const build_info = "zqlite " ++ version ++ " - Universal embedded database with optional crypto features";
 
 // Main API functions
@@ -106,7 +131,7 @@ pub fn advancedPrint() !void {
 
 // Tests
 test "zqlite version info" {
-    try std.testing.expect(std.mem.eql(u8, version, "1.2.1"));
+    try std.testing.expect(std.mem.eql(u8, version, "1.2.5"));
 }
 
 test "build info contains version" {

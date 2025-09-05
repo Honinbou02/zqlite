@@ -3,47 +3,153 @@ const zsync = @import("zsync");
 const storage = @import("../db/storage.zig");
 const connection = @import("../db/connection.zig");
 
-/// Async database operations for high-performance concurrent access
+// Enhanced zsync v0.5.4 features
+const IoUringConfig = struct {
+    entries: u32 = 256,
+    flags: u32 = 0,
+};
+
+// Future combinators for complex async patterns
+const FutureCombinators = struct {
+    pub fn race(comptime T: type, futures: []zsync.Future(T)) !T {
+        return zsync.race(T, futures);
+    }
+    
+    pub fn all(comptime T: type, futures: []zsync.Future(T)) ![]T {
+        return zsync.all(T, futures);
+    }
+    
+    pub fn timeout(comptime T: type, future: zsync.Future(T), ms: u64) !T {
+        return zsync.timeout(T, future, ms);
+    }
+};
+
+/// Enhanced async database operations with zsync v0.5.4 features
 /// Perfect for AI agents, VPN servers, and real-time applications
 pub const AsyncDatabase = struct {
     allocator: std.mem.Allocator,
     connection_pool: ConnectionPool,
-    io: zsync.ThreadPoolIo,
+    io: zsync.Runtime,
+    use_io_uring: bool,
+    query_timeout_ms: u64,
 
     const Self = @This();
 
     pub fn init(allocator: std.mem.Allocator, db_path: []const u8, pool_size: u32) !Self {
         const connection_pool = try ConnectionPool.init(allocator, db_path, pool_size);
-
+        
+        // Auto-detect best runtime (io_uring on Linux if available)
+        const runtime = zsync.Runtime.autoDetect(.{
+            .thread_pool_size = @intCast(pool_size),
+            .io_uring_config = if (std.builtin.os.tag == .linux) IoUringConfig{} else null,
+        });
+        
         return Self{
             .allocator = allocator,
             .connection_pool = connection_pool,
-            .io = zsync.ThreadPoolIo{},
+            .io = runtime,
+            .use_io_uring = std.builtin.os.tag == .linux,
+            .query_timeout_ms = 30000, // 30 second default timeout
         };
     }
 
-    /// Execute SQL asynchronously (production-ready for AI agents)
+    /// Execute SQL asynchronously with timeout support
     pub fn executeAsync(self: *Self, sql: []const u8) !QueryResult {
-        var future = self.io.async(executeSqlWorker, .{ self, sql });
-        defer future.cancel(self.io) catch {};
-        
-        return try future.await(self.io);
+        return self.executeAsyncWithTimeout(sql, self.query_timeout_ms);
+    }
+    
+    /// Execute SQL asynchronously with custom timeout
+    pub fn executeAsyncWithTimeout(self: *Self, sql: []const u8, timeout_ms: u64) !QueryResult {
+        const future = zsync.spawn(executeSqlWorker, .{ self, sql });
+        return FutureCombinators.timeout(QueryResult, future, timeout_ms) catch |err| switch (err) {
+            error.Timeout => QueryResult{
+                .rows = &[_]storage.Row{},
+                .affected_rows = 0,
+                .success = false,
+                .error_message = try std.fmt.allocPrint(self.allocator, "Query timed out after {}ms", .{timeout_ms}),
+            },
+            else => err,
+        };
     }
 
-    /// Batch execute multiple queries (production-ready for AI agents)
+    /// Batch execute multiple queries using vectorized operations
     pub fn batchExecuteAsync(self: *Self, queries: [][]const u8) ![]QueryResult {
-        var future = self.io.async(batchExecuteWorker, .{ self, queries });
-        defer future.cancel(self.io) catch {};
+        return self.batchExecuteAsyncWithTimeout(queries, self.query_timeout_ms);
+    }
+    
+    /// Vectorized batch execution with zsync channels for high throughput
+    pub fn batchExecuteAsyncWithTimeout(self: *Self, queries: [][]const u8, timeout_ms: u64) ![]QueryResult {
+        if (queries.len == 0) return &[_]QueryResult{};
         
-        return try future.await(self.io);
+        // Create futures for all queries
+        var futures = try self.allocator.alloc(zsync.Future(QueryResult), queries.len);
+        defer self.allocator.free(futures);
+        
+        for (queries, 0..) |query, i| {
+            futures[i] = zsync.spawn(executeSqlWorker, .{ self, query });
+        }
+        
+        // Wait for all queries to complete or timeout
+        const all_future = zsync.spawn(struct {
+            fn waitAll(fs: []zsync.Future(QueryResult)) ![]QueryResult {
+                return FutureCombinators.all(QueryResult, fs);
+            }
+        }.waitAll, .{futures});
+        
+        return FutureCombinators.timeout([]QueryResult, all_future, timeout_ms) catch |err| switch (err) {
+            error.Timeout => blk: {
+                const results = try self.allocator.alloc(QueryResult, queries.len);
+                for (results) |*result| {
+                    result.* = QueryResult{
+                        .rows = &[_]storage.Row{},
+                        .affected_rows = 0,
+                        .success = false,
+                        .error_message = try std.fmt.allocPrint(self.allocator, "Batch query timed out after {}ms", .{timeout_ms}),
+                    };
+                }
+                break :blk results;
+            },
+            else => err,
+        };
     }
 
-    /// Transaction processing (production-ready for VPN logging)
+    /// Transaction processing with enhanced error handling
     pub fn transactionAsync(self: *Self, queries: [][]const u8) !QueryResult {
-        var future = self.io.async(transactionWorker, .{ self, queries });
-        defer future.cancel(self.io) catch {};
+        const future = zsync.spawn(transactionWorker, .{ self, queries });
+        return FutureCombinators.timeout(QueryResult, future, self.query_timeout_ms) catch |err| switch (err) {
+            error.Timeout => QueryResult{
+                .rows = &[_]storage.Row{},
+                .affected_rows = 0,
+                .success = false,
+                .error_message = try std.fmt.allocPrint(self.allocator, "Transaction timed out after {}ms", .{self.query_timeout_ms}),
+            },
+            else => err,
+        };
+    }
+    
+    /// Bulk insert optimization using zsync channels
+    pub fn bulkInsertAsync(self: *Self, table_name: []const u8, rows: []storage.Row) !QueryResult {
+        if (rows.len == 0) return QueryResult{ .rows = &[_]storage.Row{}, .affected_rows = 0, .success = true, .error_message = null };
         
-        return try future.await(self.io);
+        // Create channel for coordinating bulk insert
+        const channel = try zsync.bounded(storage.Row, self.allocator, @intCast(rows.len));
+        defer channel.deinit();
+        
+        // Send all rows to channel
+        for (rows) |row| {
+            try channel.send(row);
+        }
+        
+        const future = zsync.spawn(bulkInsertWorker, .{ self, table_name, channel, rows.len });
+        return FutureCombinators.timeout(QueryResult, future, self.query_timeout_ms) catch |err| switch (err) {
+            error.Timeout => QueryResult{
+                .rows = &[_]storage.Row{},
+                .affected_rows = 0,
+                .success = false,
+                .error_message = try std.fmt.allocPrint(self.allocator, "Bulk insert timed out after {}ms", .{self.query_timeout_ms}),
+            },
+            else => err,
+        };
     }
 
     fn executeSqlWorker(self: *AsyncDatabase, sql: []const u8) !QueryResult {
@@ -123,21 +229,80 @@ pub const AsyncDatabase = struct {
         };
     }
 
-    fn batchExecuteWorker(self: *AsyncDatabase, queries: [][]const u8) ![]QueryResult {
+    fn bulkInsertWorker(self: *AsyncDatabase, table_name: []const u8, channel: zsync.Channel(storage.Row), row_count: usize) !QueryResult {
         defer zsync.yieldNow();
         
-        var results = try self.allocator.alloc(QueryResult, queries.len);
+        const conn = try self.connection_pool.acquire();
+        defer self.connection_pool.release(conn);
         
-        for (queries, 0..) |query, i| {
-            results[i] = try self.executeSqlWorker(query);
+        var affected_rows: u64 = 0;
+        var batch_size: usize = 0;
+        const max_batch_size = 1000; // Process in batches of 1000
+        
+        var batch = try self.allocator.alloc(storage.Row, max_batch_size);
+        defer self.allocator.free(batch);
+        
+        while (batch_size < row_count) {
+            const current_batch_size = @min(max_batch_size, row_count - batch_size);
             
-            // Yield every 10 queries to allow other tasks
-            if (i % 10 == 0) {
-                zsync.yieldNow();
+            // Receive batch of rows from channel
+            for (0..current_batch_size) |i| {
+                batch[i] = try channel.receive();
             }
+            
+            // Execute batch insert
+            const sql = try std.fmt.allocPrint(self.allocator, "INSERT INTO {s} VALUES ", .{table_name});
+            defer self.allocator.free(sql);
+            
+            // Use prepared statement for better performance
+            // This is a simplified version - real implementation would use proper prepared statements
+            var values_str = std.ArrayList(u8).init(self.allocator);
+            defer values_str.deinit();
+            
+            for (batch[0..current_batch_size], 0..) |row, i| {
+                if (i > 0) try values_str.appendSlice(", ");
+                try values_str.appendSlice("(");
+                for (row.values, 0..) |value, j| {
+                    if (j > 0) try values_str.appendSlice(", ");
+                    switch (value) {
+                        .Integer => |int| try values_str.writer().print("{}", .{int}),
+                        .Real => |real| try values_str.writer().print("{d}", .{real}),
+                        .Text => |text| try values_str.writer().print("'{}'", .{text}),
+                        .Null => try values_str.appendSlice("NULL"),
+                        else => try values_str.appendSlice("?"),
+                    }
+                }
+                try values_str.appendSlice(")");
+            }
+            
+            const full_sql = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ sql, values_str.items });
+            defer self.allocator.free(full_sql);
+            
+            const result = try self.executeSqlWorker(full_sql);
+            defer result.deinit(self.allocator);
+            
+            if (!result.success) {
+                return QueryResult{
+                    .rows = &[_]storage.Row{},
+                    .affected_rows = affected_rows,
+                    .success = false,
+                    .error_message = result.error_message,
+                };
+            }
+            
+            affected_rows += result.affected_rows;
+            batch_size += current_batch_size;
+            
+            // Yield after each batch to allow other tasks
+            zsync.yieldNow();
         }
         
-        return results;
+        return QueryResult{
+            .rows = &[_]storage.Row{},
+            .affected_rows = affected_rows,
+            .success = true,
+            .error_message = null,
+        };
     }
 
     fn transactionWorker(self: *AsyncDatabase, queries: [][]const u8) !QueryResult {
@@ -186,47 +351,160 @@ pub const AsyncDatabase = struct {
     }
 };
 
-/// Connection pool for managing database connections
+/// Enhanced connection pool with health monitoring
 const ConnectionPool = struct {
     allocator: std.mem.Allocator,
     connections: std.array_list.Managed(*connection.Connection),
+    connection_health: std.array_list.Managed(ConnectionHealth),
     available: std.Thread.Semaphore,
     mutex: std.Thread.Mutex,
+    health_check_interval_ms: u64,
+    last_health_check: i64,
+    
+    const ConnectionHealth = struct {
+        connection: *connection.Connection,
+        last_used: i64,
+        error_count: u32,
+        is_healthy: bool,
+    };
 
     const Self = @This();
 
     pub fn init(allocator: std.mem.Allocator, db_path: []const u8, pool_size: u32) !Self {
         var connections = std.array_list.Managed(*connection.Connection).init(allocator);
+        var health_info = std.array_list.Managed(ConnectionHealth).init(allocator);
+        const current_time = std.time.milliTimestamp();
 
-        // Create connections
+        // Create connections with health monitoring
         for (0..pool_size) |_| {
             const conn = try connection.Connection.open(db_path);
             try connections.append(conn);
+            try health_info.append(ConnectionHealth{
+                .connection = conn,
+                .last_used = current_time,
+                .error_count = 0,
+                .is_healthy = true,
+            });
         }
 
         return Self{
             .allocator = allocator,
             .connections = connections,
+            .connection_health = health_info,
             .available = std.Thread.Semaphore{ .permits = pool_size },
             .mutex = std.Thread.Mutex{},
+            .health_check_interval_ms = 300000, // 5 minutes
+            .last_health_check = current_time,
         };
     }
 
     pub fn acquire(self: *Self) !*connection.Connection {
+        // Perform periodic health check
+        try self.performHealthCheck();
+        
         self.available.wait();
         
         self.mutex.lock();
         defer self.mutex.unlock();
         
-        return self.connections.pop();
+        // Find a healthy connection
+        var conn_index: ?usize = null;
+        for (self.connection_health.items, 0..) |*health, i| {
+            if (health.is_healthy) {
+                conn_index = i;
+                health.last_used = std.time.milliTimestamp();
+                break;
+            }
+        }
+        
+        if (conn_index) |index| {
+            const conn = self.connections.swapRemove(index);
+            _ = self.connection_health.swapRemove(index);
+            return conn;
+        }
+        
+        // If no healthy connections, try to repair one
+        if (self.connections.items.len > 0) {
+            const conn = self.connections.pop();
+            _ = self.connection_health.pop();
+            // Attempt to repair connection
+            if (self.repairConnection(conn)) {
+                return conn;
+            }
+        }
+        
+        return error.NoHealthyConnections;
     }
 
     pub fn release(self: *Self, conn: *connection.Connection) void {
         self.mutex.lock();
         defer self.mutex.unlock();
         
+        // Update connection health on release
+        const current_time = std.time.milliTimestamp();
         self.connections.append(conn) catch {};
+        self.connection_health.append(ConnectionHealth{
+            .connection = conn,
+            .last_used = current_time,
+            .error_count = 0,
+            .is_healthy = true,
+        }) catch {};
+        
         self.available.post();
+    }
+    
+    /// Mark connection as unhealthy due to error
+    pub fn markConnectionError(self: *Self, conn: *connection.Connection) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        
+        for (self.connection_health.items) |*health| {
+            if (health.connection == conn) {
+                health.error_count += 1;
+                if (health.error_count > 5) {
+                    health.is_healthy = false;
+                }
+                break;
+            }
+        }
+    }
+    
+    /// Perform health check on connections
+    fn performHealthCheck(self: *Self) !void {
+        const current_time = std.time.milliTimestamp();
+        
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        
+        if (current_time - self.last_health_check < self.health_check_interval_ms) {
+            return;
+        }
+        
+        self.last_health_check = current_time;
+        
+        // Check each connection's health
+        for (self.connection_health.items) |*health| {
+            if (!health.is_healthy) {
+                // Try to repair unhealthy connections
+                if (self.repairConnection(health.connection)) {
+                    health.is_healthy = true;
+                    health.error_count = 0;
+                }
+            }
+        }
+    }
+    
+    /// Attempt to repair a connection
+    fn repairConnection(self: *Self, conn: *connection.Connection) bool {
+        _ = self; // Remove unused variable warning
+        
+        // Simple health check - execute a basic query
+        const test_sql = "SELECT 1";
+        conn.execute(test_sql) catch {
+            return false;
+        };
+        
+        return true;
     }
 
     pub fn deinit(self: *Self) void {
@@ -234,6 +512,7 @@ const ConnectionPool = struct {
             conn.close();
         }
         self.connections.deinit();
+        self.connection_health.deinit();
     }
 };
 
