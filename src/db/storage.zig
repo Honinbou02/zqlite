@@ -282,6 +282,24 @@ pub const DataType = enum {
     Text,
     Real,
     Blob,
+    // PostgreSQL compatibility types
+    JSON,
+    JSONB,
+    UUID,
+    Array,
+    Boolean,
+    Timestamp,
+    TimestampTZ,
+    Date,
+    Time,
+    Interval,
+    Numeric,
+    // Extended integer types
+    SmallInt,
+    BigInt,
+    // Extended text types
+    Varchar,
+    Char,
 };
 
 /// Row data
@@ -304,13 +322,316 @@ pub const Value = union(enum) {
     Blob: []const u8,
     Null,
     Parameter: u32, // Parameter placeholder index
+    // PostgreSQL compatibility values
+    JSON: []const u8, // JSON as text
+    JSONB: JSONBValue, // Parsed JSON with binary optimization
+    UUID: [16]u8, // UUID as 16 bytes
+    Array: ArrayValue, // Array of values
+    Boolean: bool,
+    Timestamp: i64, // Unix timestamp in microseconds
+    TimestampTZ: TimestampTZValue, // Timestamp with timezone
+    Date: i32, // Days since epoch
+    Time: i64, // Microseconds since midnight
+    Interval: i64, // Duration in microseconds
+    Numeric: NumericValue, // Arbitrary precision decimal
+    SmallInt: i16,
+    BigInt: i64,
 
     pub fn deinit(self: Value, allocator: std.mem.Allocator) void {
         switch (self) {
             .Text => |text| allocator.free(text),
             .Blob => |blob| allocator.free(blob),
+            .JSON => |json| allocator.free(json),
+            .JSONB => |jsonb| jsonb.deinit(allocator),
+            .Array => |array| array.deinit(allocator),
+            .TimestampTZ => |tstz| tstz.deinit(allocator),
+            .Numeric => |numeric| numeric.deinit(allocator),
             else => {},
         }
+    }
+};
+
+/// JSONB value with parsed structure
+pub const JSONBValue = struct {
+    parsed: std.json.Parsed(std.json.Value),
+    
+    pub fn init(allocator: std.mem.Allocator, json_text: []const u8) !JSONBValue {
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json_text, .{});
+        return JSONBValue{ .parsed = parsed };
+    }
+    
+    pub fn deinit(self: JSONBValue, allocator: std.mem.Allocator) void {
+        _ = allocator;
+        self.parsed.deinit();
+    }
+    
+    pub fn toString(self: JSONBValue, allocator: std.mem.Allocator) ![]u8 {
+        return try self.stringifyJson(allocator);
+    }
+    
+    /// Convert parsed JSON back to string representation
+    pub fn stringifyJson(self: JSONBValue, allocator: std.mem.Allocator) ![]u8 {
+        return switch (self.parsed.value) {
+            .null => try allocator.dupe(u8, "null"),
+            .bool => |b| try allocator.dupe(u8, if (b) "true" else "false"),
+            .integer => |i| try std.fmt.allocPrint(allocator, "{}", .{i}),
+            .float => |f| try std.fmt.allocPrint(allocator, "{d}", .{f}),
+            .number_string => |s| try allocator.dupe(u8, s),
+            .string => |s| try std.fmt.allocPrint(allocator, "\"{s}\"", .{s}),
+            .array => |arr| blk: {
+                var result = std.ArrayList(u8){};
+                defer result.deinit(allocator);
+                
+                try result.append(allocator, '[');
+                for (arr.items, 0..) |item, i| {
+                    if (i > 0) try result.appendSlice(allocator, ", ");
+                    const item_json = JSONBValue{ .parsed = std.json.Parsed(std.json.Value){ .value = item, .arena = undefined } };
+                    const item_str = try item_json.stringifyJson(allocator);
+                    defer allocator.free(item_str);
+                    try result.appendSlice(allocator, item_str);
+                }
+                try result.append(allocator, ']');
+                break :blk try result.toOwnedSlice(allocator);
+            },
+            .object => |obj| blk: {
+                var result = std.ArrayList(u8){};
+                defer result.deinit(allocator);
+                
+                try result.append(allocator, '{');
+                var first = true;
+                var iterator = obj.iterator();
+                while (iterator.next()) |entry| {
+                    if (!first) try result.appendSlice(allocator, ", ");
+                    first = false;
+                    try result.appendSlice(allocator, "\"");
+                    try result.appendSlice(allocator, entry.key_ptr.*);
+                    try result.appendSlice(allocator, "\": ");
+                    
+                    const value_json = JSONBValue{ .parsed = std.json.Parsed(std.json.Value){ .value = entry.value_ptr.*, .arena = undefined } };
+                    const value_str = try value_json.stringifyJson(allocator);
+                    defer allocator.free(value_str);
+                    try result.appendSlice(allocator, value_str);
+                }
+                try result.append(allocator, '}');
+                break :blk try result.toOwnedSlice(allocator);
+            },
+        };
+    }
+    
+    /// Extract a value from JSON using a path (PostgreSQL -> operator)
+    pub fn extractPath(self: JSONBValue, allocator: std.mem.Allocator, path: []const u8) !?[]u8 {
+        const value = self.extractValue(path) orelse return null;
+        const json_value = JSONBValue{ .parsed = std.json.Parsed(std.json.Value){ .value = value, .arena = undefined } };
+        return try json_value.stringifyJson(allocator);
+    }
+    
+    /// Extract a text value from JSON (PostgreSQL ->> operator)  
+    pub fn extractText(self: JSONBValue, allocator: std.mem.Allocator, path: []const u8) !?[]u8 {
+        const value = self.extractValue(path) orelse return null;
+        return switch (value) {
+            .string => |s| try allocator.dupe(u8, s),
+            .integer => |i| try std.fmt.allocPrint(allocator, "{}", .{i}),
+            .float => |f| try std.fmt.allocPrint(allocator, "{d}", .{f}),
+            .number_string => |s| try allocator.dupe(u8, s),
+            .bool => |b| try allocator.dupe(u8, if (b) "true" else "false"),
+            .null => try allocator.dupe(u8, "null"),
+            else => {
+                const json_value = JSONBValue{ .parsed = std.json.Parsed(std.json.Value){ .value = value, .arena = undefined } };
+                return try json_value.stringifyJson(allocator);
+            },
+        };
+    }
+    
+    /// Check if JSON contains a key (PostgreSQL ? operator)
+    pub fn hasKey(self: JSONBValue, key: []const u8) bool {
+        return switch (self.parsed.value) {
+            .object => |obj| obj.contains(key),
+            else => false,
+        };
+    }
+    
+    /// Extract raw JSON value for path operations
+    fn extractValue(self: JSONBValue, path: []const u8) ?std.json.Value {
+        return switch (self.parsed.value) {
+            .object => |obj| obj.get(path),
+            .array => |arr| blk: {
+                const index = std.fmt.parseInt(usize, path, 10) catch return null;
+                if (index >= arr.items.len) return null;
+                break :blk arr.items[index];
+            },
+            else => null,
+        };
+    }
+};
+
+/// Array value containing typed elements
+pub const ArrayValue = struct {
+    element_type: DataType,
+    elements: []Value,
+    
+    pub fn deinit(self: ArrayValue, allocator: std.mem.Allocator) void {
+        for (self.elements) |element| {
+            element.deinit(allocator);
+        }
+        allocator.free(self.elements);
+    }
+    
+    /// Create array from values
+    pub fn init(allocator: std.mem.Allocator, element_type: DataType, values: []const Value) CloneValueError!ArrayValue {
+        var elements = try allocator.alloc(Value, values.len);
+        
+        // Clone each value
+        for (values, 0..) |value, i| {
+            elements[i] = try cloneValue(allocator, value);
+        }
+        
+        return ArrayValue{
+            .element_type = element_type,
+            .elements = elements,
+        };
+    }
+    
+    /// Get array length
+    pub fn len(self: ArrayValue) usize {
+        return self.elements.len;
+    }
+    
+    /// Get element at index (1-based like PostgreSQL)
+    pub fn get(self: ArrayValue, index: usize) ?Value {
+        if (index == 0 or index > self.elements.len) return null;
+        return self.elements[index - 1];
+    }
+    
+    /// Convert array to PostgreSQL format string: {elem1,elem2,elem3}
+    pub fn toString(self: ArrayValue, allocator: std.mem.Allocator) ![]u8 {
+        var result = std.ArrayList(u8){};
+        defer result.deinit(allocator);
+        
+        try result.append(allocator, '{');
+        
+        for (self.elements, 0..) |element, i| {
+            if (i > 0) try result.appendSlice(allocator, ",");
+            
+            const elem_str = try valueToString(allocator, element);
+            defer allocator.free(elem_str);
+            try result.appendSlice(allocator, elem_str);
+        }
+        
+        try result.append(allocator, '}');
+        return try result.toOwnedSlice(allocator);
+    }
+    
+    /// Check if array contains value (PostgreSQL @> operator)
+    pub fn contains(self: ArrayValue, value: Value) bool {
+        for (self.elements) |element| {
+            if (valuesEqual(element, value)) return true;
+        }
+        return false;
+    }
+    
+    /// Array overlap (PostgreSQL && operator)
+    pub fn overlaps(self: ArrayValue, other: ArrayValue) bool {
+        for (self.elements) |element| {
+            if (other.contains(element)) return true;
+        }
+        return false;
+    }
+};
+
+/// Helper function to clone a value
+const CloneValueError = error{
+    OutOfMemory,
+    Overflow,
+    InvalidCharacter,
+    UnexpectedToken,
+    InvalidNumber,
+    InvalidEnumTag,
+    DuplicateField,
+    UnknownField,
+    MissingField,
+    LengthMismatch,
+    SyntaxError,
+    UnexpectedEndOfInput,
+    BufferUnderrun,
+    ValueTooLong,
+};
+
+fn cloneValue(allocator: std.mem.Allocator, value: Value) CloneValueError!Value {
+    return switch (value) {
+        .Integer => |i| Value{ .Integer = i },
+        .Real => |r| Value{ .Real = r },
+        .Text => |t| Value{ .Text = try allocator.dupe(u8, t) },
+        .Blob => |b| Value{ .Blob = try allocator.dupe(u8, b) },
+        .Null => Value.Null,
+        .JSON => |j| Value{ .JSON = try allocator.dupe(u8, j) },
+        .JSONB => |jsonb| Value{ .JSONB = try JSONBValue.init(allocator, try jsonb.toString(allocator)) },
+        .UUID => |uuid| Value{ .UUID = uuid },
+        .Array => |array| Value{ .Array = try ArrayValue.init(allocator, array.element_type, array.elements) },
+        .Boolean => |b| Value{ .Boolean = b },
+        .SmallInt => |s| Value{ .SmallInt = s },
+        .BigInt => |b| Value{ .BigInt = b },
+        else => value, // For simple types that don't need cloning
+    };
+}
+
+/// Helper function to convert value to string
+fn valueToString(allocator: std.mem.Allocator, value: Value) ![]u8 {
+    return switch (value) {
+        .Integer => |i| try std.fmt.allocPrint(allocator, "{}", .{i}),
+        .Real => |r| try std.fmt.allocPrint(allocator, "{d}", .{r}),
+        .Text => |t| try std.fmt.allocPrint(allocator, "\"{s}\"", .{t}),
+        .Boolean => |b| try allocator.dupe(u8, if (b) "true" else "false"),
+        .Null => try allocator.dupe(u8, "NULL"),
+        else => try allocator.dupe(u8, "?"), // Placeholder for complex types
+    };
+}
+
+/// Helper function to compare values
+fn valuesEqual(a: Value, b: Value) bool {
+    return switch (a) {
+        .Integer => |ai| switch (b) {
+            .Integer => |bi| ai == bi,
+            else => false,
+        },
+        .Real => |ar| switch (b) {
+            .Real => |br| ar == br,
+            else => false,
+        },
+        .Text => |at| switch (b) {
+            .Text => |bt| std.mem.eql(u8, at, bt),
+            else => false,
+        },
+        .Boolean => |ab| switch (b) {
+            .Boolean => |bb| ab == bb,
+            else => false,
+        },
+        .Null => switch (b) {
+            .Null => true,
+            else => false,
+        },
+        else => false, // Complex comparison would need more implementation
+    };
+}
+
+/// Timestamp with timezone
+pub const TimestampTZValue = struct {
+    timestamp: i64, // Unix timestamp in microseconds
+    timezone: []const u8, // Timezone name (e.g., "UTC", "America/New_York")
+    
+    pub fn deinit(self: TimestampTZValue, allocator: std.mem.Allocator) void {
+        allocator.free(self.timezone);
+    }
+};
+
+/// Arbitrary precision numeric value
+pub const NumericValue = struct {
+    precision: u16, // Total digits
+    scale: u16, // Digits after decimal point
+    digits: []u8, // BCD encoded digits
+    is_negative: bool,
+    
+    pub fn deinit(self: NumericValue, allocator: std.mem.Allocator) void {
+        allocator.free(self.digits);
     }
 };
 

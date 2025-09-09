@@ -12,6 +12,8 @@ pub const Statement = union(enum) {
     Rollback: TransactionStatement,
     CreateIndex: CreateIndexStatement,
     DropIndex: DropIndexStatement,
+    // PostgreSQL compatibility statements
+    With: WithStatement, // Common Table Expressions
 
     pub fn deinit(self: *Statement, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -25,6 +27,7 @@ pub const Statement = union(enum) {
             .Rollback => |*stmt| stmt.deinit(allocator),
             .CreateIndex => |*stmt| stmt.deinit(allocator),
             .DropIndex => |*stmt| stmt.deinit(allocator),
+            .With => |*stmt| stmt.deinit(allocator),
         }
     }
 };
@@ -32,7 +35,7 @@ pub const Statement = union(enum) {
 /// SELECT statement AST
 pub const SelectStatement = struct {
     columns: []Column,
-    table: []const u8,
+    table: ?[]const u8, // Nullable for CTEs that don't reference tables
     joins: []JoinClause,
     where_clause: ?WhereClause,
     group_by: ?[][]const u8,
@@ -40,6 +43,7 @@ pub const SelectStatement = struct {
     order_by: ?[]OrderByClause,
     limit: ?u32,
     offset: ?u32,
+    window_definitions: ?[]WindowDefinition, // PostgreSQL window functions
 
     pub fn deinit(self: *SelectStatement, allocator: std.mem.Allocator) void {
         for (self.columns) |*column| {
@@ -49,7 +53,10 @@ pub const SelectStatement = struct {
             }
         }
         allocator.free(self.columns);
-        allocator.free(self.table);
+        
+        if (self.table) |table| {
+            allocator.free(table);
+        }
 
         for (self.joins) |*join| {
             allocator.free(join.table);
@@ -77,6 +84,13 @@ pub const SelectStatement = struct {
                 allocator.free(clause.column);
             }
             allocator.free(order_by);
+        }
+        
+        if (self.window_definitions) |windows| {
+            for (windows) |*window| {
+                window.deinit(allocator);
+            }
+            allocator.free(windows);
         }
     }
 };
@@ -179,15 +193,19 @@ pub const Column = struct {
     alias: ?[]const u8,
 };
 
-/// Column expression (can be a simple column or aggregate function)
+/// Column expression (can be a simple column, aggregate function, or window function)
 pub const ColumnExpression = union(enum) {
     Simple: []const u8, // Simple column name
     Aggregate: AggregateFunction,
+    Window: WindowFunction, // PostgreSQL window functions
+    FunctionCall: FunctionCall, // Regular function calls
     
     pub fn deinit(self: *ColumnExpression, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .Simple => |name| allocator.free(name),
             .Aggregate => |*agg| agg.deinit(allocator),
+            .Window => |*window| window.deinit(allocator),
+            .FunctionCall => |*func| func.deinit(allocator),
         }
     }
 };
@@ -240,6 +258,14 @@ pub const DataType = enum {
     Double,
     SmallInt,
     BigInt,
+    // PostgreSQL compatibility types
+    JSON,
+    JSONB,
+    UUID,
+    Array,
+    TimestampTZ,
+    Interval,
+    Numeric,
 };
 
 /// Default value for column constraints
@@ -554,6 +580,210 @@ pub const DropIndexStatement = struct {
     }
 };
 
+/// Common Table Expression (CTE) statement
+pub const WithStatement = struct {
+    cte_definitions: []CTEDefinition,
+    recursive: bool,
+    main_query: SelectStatement,
+    
+    pub fn deinit(self: *WithStatement, allocator: std.mem.Allocator) void {
+        for (self.cte_definitions) |*cte| {
+            cte.deinit(allocator);
+        }
+        allocator.free(self.cte_definitions);
+        self.main_query.deinit(allocator);
+    }
+};
+
+/// CTE definition
+pub const CTEDefinition = struct {
+    name: []const u8,
+    column_names: ?[][]const u8, // Optional column list
+    query: SelectStatement,
+    
+    pub fn deinit(self: *CTEDefinition, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        if (self.column_names) |cols| {
+            for (cols) |col| {
+                allocator.free(col);
+            }
+            allocator.free(cols);
+        }
+        self.query.deinit(allocator);
+    }
+};
+
+/// Window function for PostgreSQL compatibility
+pub const WindowFunction = struct {
+    function_type: WindowFunctionType,
+    arguments: []FunctionArgument,
+    window_spec: WindowSpecification,
+    
+    pub fn deinit(self: *WindowFunction, allocator: std.mem.Allocator) void {
+        for (self.arguments) |arg| {
+            arg.deinit(allocator);
+        }
+        allocator.free(self.arguments);
+        self.window_spec.deinit(allocator);
+    }
+};
+
+/// Window function types
+pub const WindowFunctionType = enum {
+    RowNumber,
+    Rank,
+    DenseRank,
+    PercentRank,
+    CumeDist,
+    Ntile,
+    Lag,
+    Lead,
+    FirstValue,
+    LastValue,
+    NthValue,
+};
+
+/// Window specification
+pub const WindowSpecification = struct {
+    window_name: ?[]const u8, // Reference to named window
+    partition_by: ?[][]const u8, // PARTITION BY columns
+    order_by: ?[]OrderByClause, // ORDER BY within window
+    frame_clause: ?FrameClause, // Window frame specification
+    
+    pub fn deinit(self: *WindowSpecification, allocator: std.mem.Allocator) void {
+        if (self.window_name) |name| {
+            allocator.free(name);
+        }
+        if (self.partition_by) |cols| {
+            for (cols) |col| {
+                allocator.free(col);
+            }
+            allocator.free(cols);
+        }
+        if (self.order_by) |order_by| {
+            for (order_by) |clause| {
+                allocator.free(clause.column);
+            }
+            allocator.free(order_by);
+        }
+        if (self.frame_clause) |*frame| {
+            frame.deinit(allocator);
+        }
+    }
+};
+
+/// Window frame clause
+pub const FrameClause = struct {
+    frame_type: FrameType,
+    start_bound: FrameBound,
+    end_bound: ?FrameBound,
+    
+    pub fn deinit(self: *FrameClause, allocator: std.mem.Allocator) void {
+        _ = self;
+        _ = allocator;
+        // No dynamic memory to free in current implementation
+    }
+};
+
+/// Window frame types
+pub const FrameType = enum {
+    Rows,
+    Range,
+    Groups,
+};
+
+/// Window frame bound
+pub const FrameBound = enum {
+    UnboundedPreceding,
+    UnboundedFollowing,
+    CurrentRow,
+    Preceding,
+    Following,
+};
+
+/// Window definition (for WINDOW clause)
+pub const WindowDefinition = struct {
+    name: []const u8,
+    specification: WindowSpecification,
+    
+    pub fn deinit(self: *WindowDefinition, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        self.specification.deinit(allocator);
+    }
+};
+
+/// UUID utility functions
+pub const UUIDUtils = struct {
+    /// Generate a random UUID v4
+    pub fn generateV4(random: std.Random) [16]u8 {
+        var uuid: [16]u8 = undefined;
+        random.bytes(&uuid);
+        
+        // Set version to 4 (random UUID)
+        uuid[6] = (uuid[6] & 0x0F) | 0x40;
+        
+        // Set variant bits
+        uuid[8] = (uuid[8] & 0x3F) | 0x80;
+        
+        return uuid;
+    }
+    
+    /// Parse UUID from string representation
+    pub fn parseFromString(uuid_str: []const u8) ![16]u8 {
+        if (uuid_str.len != 36) return error.InvalidUUIDFormat;
+        
+        var uuid: [16]u8 = undefined;
+        var uuid_idx: usize = 0;
+        var str_idx: usize = 0;
+        
+        while (str_idx < uuid_str.len and uuid_idx < 16) {
+            if (uuid_str[str_idx] == '-') {
+                str_idx += 1;
+                continue;
+            }
+            
+            if (str_idx + 1 >= uuid_str.len) return error.InvalidUUIDFormat;
+            
+            uuid[uuid_idx] = try std.fmt.parseInt(u8, uuid_str[str_idx..str_idx + 2], 16);
+            uuid_idx += 1;
+            str_idx += 2;
+        }
+        
+        if (uuid_idx != 16) return error.InvalidUUIDFormat;
+        return uuid;
+    }
+    
+    /// Convert UUID to string representation
+    pub fn toString(uuid: [16]u8, allocator: std.mem.Allocator) ![]u8 {
+        return try std.fmt.allocPrint(allocator, 
+            "{x:0>2}{x:0>2}{x:0>2}{x:0>2}-{x:0>2}{x:0>2}-{x:0>2}{x:0>2}-{x:0>2}{x:0>2}-{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}",
+            .{ uuid[0], uuid[1], uuid[2], uuid[3], uuid[4], uuid[5], uuid[6], uuid[7],
+               uuid[8], uuid[9], uuid[10], uuid[11], uuid[12], uuid[13], uuid[14], uuid[15] });
+    }
+};
+
 test "ast creation" {
     try std.testing.expect(true); // Placeholder
+}
+
+test "uuid generation and parsing" {
+    var prng = std.Random.DefaultPrng.init(blk: {
+        var seed: u64 = undefined;
+        try std.posix.getrandom(std.mem.asBytes(&seed));
+        break :blk seed;
+    });
+    const random = prng.random();
+    
+    // Test UUID generation
+    const uuid = UUIDUtils.generateV4(random);
+    try std.testing.expect(uuid.len == 16);
+    
+    // Test UUID string conversion
+    const uuid_str = try UUIDUtils.toString(uuid, std.testing.allocator);
+    defer std.testing.allocator.free(uuid_str);
+    try std.testing.expect(uuid_str.len == 36);
+    
+    // Test UUID parsing
+    const parsed_uuid = try UUIDUtils.parseFromString(uuid_str);
+    try std.testing.expectEqualSlices(u8, &uuid, &parsed_uuid);
 }

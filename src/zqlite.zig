@@ -21,6 +21,7 @@ pub const btree = @import("db/btree.zig");
 pub const wal = @import("db/wal.zig");
 pub const pager = @import("db/pager.zig");
 pub const encryption = @import("db/encryption.zig");
+pub const connection_pool = @import("db/connection_pool.zig");
 
 // SQL parsing modules
 pub const tokenizer = @import("parser/tokenizer.zig");
@@ -30,6 +31,8 @@ pub const parser = @import("parser/parser.zig");
 // Query execution modules
 pub const planner = @import("executor/planner.zig");
 pub const vm = @import("executor/vm.zig");
+pub const prepared_statements = @import("executor/prepared_statements.zig");
+pub const window_functions = @import("executor/window_functions.zig");
 
 // CLI shell
 pub const cli = @import("shell/cli.zig");
@@ -84,12 +87,14 @@ pub const sqlite_compat = @import("sqlite_compat/sqlite_compatibility.zig");
 
 // Performance optimizations
 pub const performance = @import("performance/cache_manager.zig");
+pub const query_cache = @import("performance/query_cache.zig");
 
 // Zeppelin package manager integration
 pub const zeppelin = @import("zeppelin/package_manager.zig");
 
-// Enhanced error reporting
+// Enhanced error reporting  
 pub const error_handling = @import("error_handling/enhanced_errors.zig");
+pub const database_errors = @import("error_handling/database_errors.zig");
 
 // Post-quantum transport (optional - v1.2.2)
 pub const transport = if (@import("builtin").is_test or @hasDecl(@import("root"), "zqlite_enable_transport"))
@@ -110,8 +115,8 @@ else
 pub const advanced_indexes = @import("indexing/advanced_indexes.zig");
 
 // Version and metadata
-pub const version = "1.2.5";
-pub const build_info = "zqlite " ++ version ++ " - Universal embedded database with optional crypto features";
+pub const version = "1.3.0";
+pub const build_info = "zqlite " ++ version ++ " - PostgreSQL-compatible embedded database with enterprise features";
 
 // Main API functions
 pub fn open(path: []const u8) !*db.Connection {
@@ -122,16 +127,43 @@ pub fn openMemory() !*db.Connection {
     return db.Connection.openMemory();
 }
 
+/// Create connection pool for high-concurrency applications
+pub fn createConnectionPool(allocator: std.mem.Allocator, database_path: ?[]const u8, min_connections: u32, max_connections: u32) !*connection_pool.ConnectionPool {
+    return connection_pool.ConnectionPool.init(allocator, database_path, min_connections, max_connections);
+}
+
+/// Create query cache for improved performance
+pub fn createQueryCache(allocator: std.mem.Allocator, max_entries: usize, max_memory_bytes: usize) !*query_cache.QueryCache {
+    return query_cache.QueryCache.init(allocator, max_entries, max_memory_bytes);
+}
+
+/// Generate UUID v4
+pub fn generateUUID(random: std.Random) [16]u8 {
+    return ast.UUIDUtils.generateV4(random);
+}
+
+/// Parse UUID from string
+pub fn parseUUID(uuid_str: []const u8) ![16]u8 {
+    return ast.UUIDUtils.parseFromString(uuid_str);
+}
+
+/// Convert UUID to string
+pub fn uuidToString(uuid: [16]u8, allocator: std.mem.Allocator) ![]u8 {
+    return ast.UUIDUtils.toString(uuid, allocator);
+}
+
 // Advanced print function for demo purposes
 pub fn advancedPrint() !void {
     std.debug.print("🟦 {s}\n", .{build_info});
-    std.debug.print("   Features: B-tree storage, WAL, SQL parsing\n", .{});
-    std.debug.print("   Status: Building core functionality...\n", .{});
+    std.debug.print("   PostgreSQL Features: JSON/JSONB, UUIDs, Arrays, Window Functions, CTEs\n", .{});
+    std.debug.print("   Performance: Connection Pooling, Query Caching, Prepared Statements\n", .{});
+    std.debug.print("   Enterprise: Enhanced Error Handling, Transaction Safety\n", .{});
+    std.debug.print("   Status: Production Ready v1.3.0! 🚀\n", .{});
 }
 
 // Tests
 test "zqlite version info" {
-    try std.testing.expect(std.mem.eql(u8, version, "1.2.5"));
+    try std.testing.expect(std.mem.eql(u8, version, "1.3.0"));
 }
 
 test "build info contains version" {

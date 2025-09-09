@@ -204,6 +204,7 @@ pub const Parser = struct {
                 .order_by = order_by,
                 .limit = limit,
                 .offset = offset,
+                .window_definitions = null, // TODO: Parse WINDOW clause
             },
         };
     }

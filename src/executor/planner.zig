@@ -28,6 +28,7 @@ pub const Planner = struct {
             .Rollback => |*trans| try self.planRollback(trans),
             .CreateIndex => |*create_idx| try self.planCreateIndex(create_idx),
             .DropIndex => |*drop_idx| try self.planDropIndex(drop_idx),
+            .With => |*with| try self.planWith(with), // Handle CTE
         };
     }
 
@@ -38,13 +39,13 @@ pub const Planner = struct {
         // Table scan step
         try steps.append(ExecutionStep{
             .TableScan = TableScanStep{
-                .table_name = try self.allocator.dupe(u8, select.table),
+                .table_name = if (select.table) |table| try self.allocator.dupe(u8, table) else "",
             },
         });
 
         // JOIN steps
         for (select.joins) |join| {
-            const join_step = try self.planJoin(select.table, &join);
+            const join_step = try self.planJoin(select.table orelse "", &join);
             try steps.append(join_step);
         }
 
@@ -109,6 +110,14 @@ pub const Planner = struct {
                     .Aggregate => {
                         // This shouldn't happen if has_aggregates was false
                         return error.UnexpectedAggregate;
+                    },
+                    .Window => {
+                        // Window functions will be handled in a later version
+                        try columns.append(try self.allocator.dupe(u8, "window_result"));
+                    },
+                    .FunctionCall => {
+                        // Function calls will be handled in a later version
+                        try columns.append(try self.allocator.dupe(u8, "function_result"));
                     },
                 }
             }
@@ -270,6 +279,14 @@ pub const Planner = struct {
                     .Double => storage.DataType.Real,
                     .SmallInt => storage.DataType.Integer,
                     .BigInt => storage.DataType.Integer,
+                    // PostgreSQL compatibility types
+                    .JSON => storage.DataType.JSON,
+                    .JSONB => storage.DataType.JSONB,
+                    .UUID => storage.DataType.UUID,
+                    .Array => storage.DataType.Array,
+                    .TimestampTZ => storage.DataType.TimestampTZ,
+                    .Interval => storage.DataType.Interval,
+                    .Numeric => storage.DataType.Numeric,
                 },
                 .is_primary_key = blk: {
                     for (col_def.constraints) |constraint| {
@@ -589,6 +606,26 @@ pub const Planner = struct {
             .Parameter => |param_index| ast.Value{ .Parameter = param_index },
         };
     }
+    
+    /// Plan Common Table Expression (WITH clause) execution
+    fn planWith(self: *Self, with: *const ast.WithStatement) !ExecutionPlan {
+        var steps = std.array_list.Managed(ExecutionStep).init(self.allocator);
+        
+        // For now, just plan the main query (CTE support will be enhanced later)
+        _ = with.cte_definitions; // TODO: Implement full CTE planning
+        
+        const main_plan = try self.planSelect(&with.main_query);
+        
+        // Append main query steps
+        for (main_plan.steps) |step| {
+            try steps.append(step);
+        }
+        
+        return ExecutionPlan{
+            .steps = try steps.toOwnedSlice(),
+            .allocator = self.allocator,
+        };
+    }
 };
 
 /// Execution plan containing steps to execute
@@ -623,6 +660,7 @@ pub const ExecutionStep = union(enum) {
     Rollback,
     CreateIndex: CreateIndexStep,
     DropIndex: DropIndexStep,
+    // CreateCTE: CreateCTEStep, // TODO: Add CTE support in future version
 
     pub fn deinit(self: *ExecutionStep, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -643,6 +681,7 @@ pub const ExecutionStep = union(enum) {
             .Rollback => {},
             .CreateIndex => |*step| step.deinit(allocator),
             .DropIndex => |*step| step.deinit(allocator),
+            // .CreateCTE => |*step| step.deinit(allocator), // TODO: Add CTE support
         }
     }
 };
@@ -871,6 +910,18 @@ pub const AggregateOperation = struct {
         if (self.alias) |alias| {
             allocator.free(alias);
         }
+    }
+};
+
+/// CTE creation step  
+pub const CreateCTEStep = struct {
+    name: []const u8,
+    plan: ExecutionPlan,
+    recursive: bool,
+    
+    pub fn deinit(self: *CreateCTEStep, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        self.plan.deinit();
     }
 };
 

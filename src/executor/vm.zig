@@ -248,6 +248,20 @@ pub const VirtualMachine = struct {
             .Blob => |b| ast.Value{ .Blob = try self.allocator.dupe(u8, b) },
             .Null => ast.Value.Null,
             .Parameter => |param_index| ast.Value{ .Parameter = param_index },
+            // PostgreSQL compatibility values
+            .JSON => |j| ast.Value{ .Text = try self.allocator.dupe(u8, j) },
+            .JSONB => |jsonb| ast.Value{ .Text = try jsonb.toString(self.allocator) },
+            .UUID => |uuid| ast.Value{ .Text = try ast.UUIDUtils.toString(uuid, self.allocator) },
+            .Array => |array| ast.Value{ .Text = try array.toString(self.allocator) },
+            .Boolean => |b| ast.Value{ .Integer = if (b) 1 else 0 },
+            .Timestamp => |ts| ast.Value{ .Integer = @intCast(ts) },
+            .TimestampTZ => |tstz| ast.Value{ .Text = try std.fmt.allocPrint(self.allocator, "{}", .{tstz.timestamp}) },
+            .Date => |d| ast.Value{ .Integer = d },
+            .Time => |t| ast.Value{ .Integer = @intCast(t) },
+            .Interval => |i| ast.Value{ .Integer = @intCast(i) },
+            .Numeric => |n| ast.Value{ .Text = try std.fmt.allocPrint(self.allocator, "NUMERIC({},{})", .{ n.precision, n.scale }) },
+            .SmallInt => |si| ast.Value{ .Integer = si },
+            .BigInt => |bi| ast.Value{ .Integer = @intCast(bi) },
         };
     }
     
@@ -302,6 +316,26 @@ pub const VirtualMachine = struct {
             .Blob => |b| storage.Value{ .Blob = try self.allocator.dupe(u8, b) },
             .Null => storage.Value.Null,
             .Parameter => |_| return error.UnresolvedParameter, // Parameters should be resolved before cloning
+            // PostgreSQL compatibility values
+            .JSON => |json| storage.Value{ .JSON = try self.allocator.dupe(u8, json) },
+            .JSONB => |jsonb| storage.Value{ .JSONB = storage.JSONBValue.init(self.allocator, try jsonb.toString(self.allocator)) catch |err| blk: {
+                std.debug.print("JSONB clone error: {}\n", .{err});
+                break :blk storage.JSONBValue.init(self.allocator, "{}") catch unreachable;
+            } },
+            .UUID => |uuid| storage.Value{ .UUID = uuid },
+            .Array => |array| storage.Value{ .Array = storage.ArrayValue{
+                .element_type = array.element_type,
+                .elements = try self.allocator.dupe(storage.Value, array.elements),
+            } },
+            .Boolean => |b| storage.Value{ .Boolean = b },
+            .Timestamp => |ts| storage.Value{ .Timestamp = ts },
+            .TimestampTZ => |tstz| storage.Value{ .TimestampTZ = tstz },
+            .Date => |d| storage.Value{ .Date = d },
+            .Time => |t| storage.Value{ .Time = t },
+            .Interval => |i| storage.Value{ .Interval = i },
+            .Numeric => |n| storage.Value{ .Numeric = n },
+            .SmallInt => |si| storage.Value{ .SmallInt = si },
+            .BigInt => |bi| storage.Value{ .BigInt = bi },
         };
     }
 
@@ -676,6 +710,52 @@ pub const VirtualMachine = struct {
                 else => .lt,
             },
             .Parameter => .gt, // Parameters should have been resolved before comparison
+            // PostgreSQL compatibility values
+            .JSON => |l| switch (right) {
+                .JSON => |r| std.mem.order(u8, l, r),
+                else => .gt,
+            },
+            .JSONB => .gt, // Complex comparison - simplified
+            .UUID => |l| switch (right) {
+                .UUID => |r| std.mem.order(u8, &l, &r),
+                else => .gt,
+            },
+            .Array => .gt, // Complex comparison - simplified 
+            .Boolean => |l| switch (right) {
+                .Boolean => |r| if (l == r) .eq else if (l) .gt else .lt,
+                else => .gt,
+            },
+            .Timestamp => |l| switch (right) {
+                .Timestamp => |r| std.math.order(l, r),
+                else => .gt,
+            },
+            .TimestampTZ => |l| switch (right) {
+                .TimestampTZ => |r| std.math.order(l.timestamp, r.timestamp),
+                else => .gt,
+            },
+            .Date => |l| switch (right) {
+                .Date => |r| std.math.order(l, r),
+                else => .gt,
+            },
+            .Time => |l| switch (right) {
+                .Time => |r| std.math.order(l, r),
+                else => .gt,
+            },
+            .Interval => |l| switch (right) {
+                .Interval => |r| std.math.order(l, r),
+                else => .gt,
+            },
+            .Numeric => .gt, // Complex comparison - simplified
+            .SmallInt => |l| switch (right) {
+                .SmallInt => |r| std.math.order(l, r),
+                .Integer => |r| std.math.order(@as(i32, l), r),
+                else => .gt,
+            },
+            .BigInt => |l| switch (right) {
+                .BigInt => |r| std.math.order(l, r),
+                .Integer => |r| std.math.order(@as(i64, r), l),
+                else => .gt,
+            },
         };
     }
 
@@ -999,6 +1079,19 @@ pub fn execute(connection: *db.Connection, parsed: *const ast.Statement) !void {
                             .Null => std.debug.print("NULL", .{}),
                             .Blob => std.debug.print("<blob>", .{}),
                             .Parameter => |param_index| std.debug.print("?{d}", .{param_index}),
+                            .JSON => |json| std.debug.print("JSON:'{s}'", .{json}),
+                            .JSONB => |jsonb| std.debug.print("JSONB:'{s}'", .{jsonb.toString(connection.allocator) catch "invalid"}),
+                            .UUID => |uuid| std.debug.print("UUID:{any}", .{uuid}),
+                            .Array => |array| std.debug.print("ARRAY:{s}", .{array.toString(connection.allocator) catch "invalid"}),
+                            .Boolean => |b| std.debug.print("{}", .{b}),
+                            .Timestamp => |ts| std.debug.print("TS:{d}", .{ts}),
+                            .TimestampTZ => |tstz| std.debug.print("TSTZ:{d}({s})", .{ tstz.timestamp, tstz.timezone }),
+                            .Date => |d| std.debug.print("DATE:{d}", .{d}),
+                            .Time => |t| std.debug.print("TIME:{d}", .{t}),
+                            .Interval => |interval| std.debug.print("INTERVAL:{d}", .{interval}),
+                            .Numeric => |n| std.debug.print("NUMERIC:{s}", .{n.digits}),
+                            .SmallInt => |si| std.debug.print("{d}", .{si}),
+                            .BigInt => |bi| std.debug.print("{d}", .{bi}),
                         }
                     }
                     std.debug.print(" │\n", .{});

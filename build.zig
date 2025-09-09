@@ -101,6 +101,14 @@ pub fn build(b: *std.Build) void {
     // v1.2.2 Universal API examples
     createBasicExample(b, "universal_api_demo", lib, target, optimize, zsync);
     createBasicExample(b, "web_backend_demo", lib, target, optimize, zsync);
+    
+    // v1.3.0 PostgreSQL compatibility demos
+    createDemo(b, "uuid_demo", lib, target, optimize, zsync);
+    createDemo(b, "json_demo", lib, target, optimize, zsync);
+    createDemo(b, "connection_pool_demo", lib, target, optimize, zsync);
+    createDemo(b, "window_functions_demo", lib, target, optimize, zsync);
+    // createDemo(b, "query_cache_demo", lib, target, optimize, zsync); // TODO: Fix DoublyLinkedList API for Zig 0.16
+    createDemo(b, "array_operations_demo", lib, target, optimize, zsync);
 }
 
 fn createBasicExample(b: *std.Build, name: []const u8, lib: *std.Build.Step.Compile, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, zsync: *std.Build.Dependency) void {
@@ -117,4 +125,20 @@ fn createBasicExample(b: *std.Build, name: []const u8, lib: *std.Build.Step.Comp
     example.root_module.addImport("zqlite", lib.root_module);
     example.root_module.addImport("zsync", zsync.module("zsync"));
     b.installArtifact(example);
+}
+
+fn createDemo(b: *std.Build, name: []const u8, lib: *std.Build.Step.Compile, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, zsync: *std.Build.Dependency) void {
+    
+    const demo = b.addExecutable(.{
+        .name = name,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(b.fmt("src/examples/{s}.zig", .{name})),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    demo.root_module.addImport("zqlite", lib.root_module);
+    demo.root_module.addImport("zsync", zsync.module("zsync"));
+    b.installArtifact(demo);
 }

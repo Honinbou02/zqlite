@@ -13,6 +13,7 @@ pub const Connection = struct {
     wal: ?*wal.WriteAheadLog,
     is_memory: bool,
     path: ?[]const u8,
+    owns_storage: bool, // Whether this connection owns and should clean up the storage engine
 
     const Self = @This();
 
@@ -26,6 +27,7 @@ pub const Connection = struct {
         conn.wal = try wal.WriteAheadLog.init(allocator, path);
         conn.is_memory = false;
         conn.path = try allocator.dupe(u8, path);
+        conn.owns_storage = true;
 
         return conn;
     }
@@ -40,7 +42,21 @@ pub const Connection = struct {
         conn.wal = null; // No WAL for in-memory databases
         conn.is_memory = true;
         conn.path = null;
+        conn.owns_storage = true;
 
+        return conn;
+    }
+
+    /// Create connection with shared storage engine (for connection pools)
+    pub fn openWithSharedStorage(allocator: std.mem.Allocator, shared_storage: *storage.StorageEngine) !*Self {
+        var conn = try allocator.create(Self);
+        conn.allocator = allocator;
+        conn.storage_engine = shared_storage;
+        conn.wal = null; // Shared connections don't manage WAL independently
+        conn.is_memory = true; // Assume shared storage is memory-based for simplicity
+        conn.path = null;
+        conn.owns_storage = false; // This connection doesn't own the storage
+        
         return conn;
     }
 
@@ -219,7 +235,7 @@ pub const Connection = struct {
             .Select => |select| {
                 if (select.columns.len == 1 and std.mem.eql(u8, select.columns[0].name, "*")) {
                     // SELECT * - get columns from table schema
-                    const table_name = select.table;
+                    const table_name = select.table orelse return &.{};
                     const table = self.storage_engine.getTable(table_name);
                     if (table) |t| {
                         var column_names = try self.allocator.alloc([]const u8, t.schema.columns.len);
@@ -251,7 +267,12 @@ pub const Connection = struct {
         if (self.wal) |w| {
             w.deinit();
         }
-        self.storage_engine.deinit();
+        
+        // Only deinit storage if this connection owns it
+        if (self.owns_storage) {
+            self.storage_engine.deinit();
+        }
+        
         if (self.path) |p| {
             self.allocator.free(p);
         }
@@ -629,6 +650,36 @@ pub const PreparedStatement = struct {
             .Blob => |b| storage.Value{ .Blob = try allocator.dupe(u8, b) },
             .Null => storage.Value.Null,
             .Parameter => |param_index| storage.Value{ .Parameter = param_index },
+            .JSON => |j| storage.Value{ .JSON = try allocator.dupe(u8, j) },
+            .JSONB => |jsonb| storage.Value{ .JSONB = storage.JSONBValue.init(allocator, try jsonb.toString(allocator)) catch return storage.Value.Null },
+            .UUID => |uuid| storage.Value{ .UUID = uuid },
+            .Array => |array| storage.Value{ .Array = storage.ArrayValue{
+                .element_type = array.element_type,
+                .elements = blk: {
+                    var cloned_elements = try allocator.alloc(storage.Value, array.elements.len);
+                    for (array.elements, 0..) |elem, k| {
+                        cloned_elements[k] = try cloneValue(allocator, elem);
+                    }
+                    break :blk cloned_elements;
+                },
+            } },
+            .Boolean => |b| storage.Value{ .Boolean = b },
+            .Timestamp => |ts| storage.Value{ .Timestamp = ts },
+            .TimestampTZ => |tstz| storage.Value{ .TimestampTZ = storage.TimestampTZValue{
+                .timestamp = tstz.timestamp,
+                .timezone = try allocator.dupe(u8, tstz.timezone),
+            } },
+            .Date => |d| storage.Value{ .Date = d },
+            .Time => |t| storage.Value{ .Time = t },
+            .Interval => |interval| storage.Value{ .Interval = interval },
+            .Numeric => |n| storage.Value{ .Numeric = storage.NumericValue{
+                .precision = n.precision,
+                .scale = n.scale,
+                .digits = try allocator.dupe(u8, n.digits),
+                .is_negative = n.is_negative,
+            } },
+            .SmallInt => |si| storage.Value{ .SmallInt = si },
+            .BigInt => |bi| storage.Value{ .BigInt = bi },
         };
     }
 };

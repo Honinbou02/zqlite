@@ -13,7 +13,7 @@ pub const EnhancedErrorReporting = struct {
     pub fn init(allocator: std.mem.Allocator, max_history_size: usize) Self {
         return Self{
             .allocator = allocator,
-            .error_history = std.ArrayList(ErrorReport).init(allocator),
+            .error_history = std.ArrayList(ErrorReport){},
             .max_history_size = max_history_size,
         };
     }
@@ -40,7 +40,7 @@ pub const EnhancedErrorReporting = struct {
     
     /// Get formatted error message
     pub fn formatError(self: *Self, report: ErrorReport) ![]u8 {
-        var message = std.ArrayList(u8).init(self.allocator);
+        var message = std.ArrayList(u8){};
         
         // Header
         try message.writer().print("🚨 zqlite Error #{} [{}]\n", .{ report.id, @tagName(report.severity) });
@@ -186,7 +186,7 @@ pub const EnhancedErrorReporting = struct {
         const current_time = std.time.milliTimestamp();
         const cutoff_time = current_time - max_age_ms;
         
-        var new_history = std.ArrayList(ErrorReport).init(self.allocator);
+        var new_history = std.ArrayList(ErrorReport){};
         
         for (self.error_history.items) |report| {
             if (report.timestamp >= cutoff_time) {
@@ -204,7 +204,7 @@ pub const EnhancedErrorReporting = struct {
     // Helper functions
     fn captureStackTrace(self: *Self) ![]StackFrame {
         // Simplified stack trace capture - in production, use debug info
-        var frames = std.ArrayList(StackFrame).init(self.allocator);
+        var frames = std.ArrayList(StackFrame){};
         
         // Capture current function information
         try frames.append(StackFrame{
@@ -226,7 +226,7 @@ pub const EnhancedErrorReporting = struct {
     fn generateSuggestions(self: *Self, error_type: ErrorType, context: ErrorContext) ![][]u8 {
         _ = context; // Remove unused variable warning
         
-        var suggestions = std.ArrayList([]u8).init(self.allocator);
+        var suggestions = std.ArrayList([]u8){};
         
         switch (error_type) {
             .ParseError => {
@@ -313,7 +313,7 @@ pub const EnhancedErrorReporting = struct {
     }
     
     fn findRelatedErrors(self: *Self, report: ErrorReport) ![]u64 {
-        var related = std.ArrayList(u64).init(self.allocator);
+        var related = std.ArrayList(u64){};
         const time_window = 300000; // 5 minutes
         
         for (self.error_history.items) |other_report| {
