@@ -26,6 +26,23 @@ pub fn build(b: *std.Build) void {
     // Install the library
     b.installArtifact(lib);
 
+    // Create C library for FFI
+    const c_lib = b.addLibrary(.{
+        .name = "zqlite_c",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/ffi/c_api.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    // Link the main library to the C FFI
+    c_lib.root_module.addImport("zqlite", lib.root_module);
+    c_lib.root_module.addImport("zsync", zsync.module("zsync"));
+
+    // Install the C library
+    b.installArtifact(c_lib);
+
     // Export the zqlite module for use by other packages
     const zqlite_module = b.addModule("zqlite", .{
         .root_source_file = b.path("src/zqlite.zig"),
@@ -109,6 +126,9 @@ pub fn build(b: *std.Build) void {
     createDemo(b, "window_functions_demo", lib, target, optimize, zsync);
     // createDemo(b, "query_cache_demo", lib, target, optimize, zsync); // TODO: Fix DoublyLinkedList API for Zig 0.16
     createDemo(b, "array_operations_demo", lib, target, optimize, zsync);
+
+    // Ghostwire integration demo
+    createBasicExample(b, "ghostwire_integration_demo", lib, target, optimize, zsync);
 }
 
 fn createBasicExample(b: *std.Build, name: []const u8, lib: *std.Build.Step.Compile, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, zsync: *std.Build.Dependency) void {

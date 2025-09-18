@@ -1,5 +1,5 @@
 const std = @import("std");
-const zqlite = @import("../zqlite.zig");
+const zqlite = @import("zqlite");
 
 /// C FFI interface for zqlite
 /// Enables integration with Rust, Python, and other languages
