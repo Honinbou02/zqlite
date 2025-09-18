@@ -1,0 +1,179 @@
+version: '3.8'
+
+services:
+  # Main ZQLite FFI testing environment
+  zqlite-ffi-test:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: zqlite-ffi-testing
+    working_dir: /workspace
+    volumes:
+      # Mount the current directory for development
+      - ../:/workspace/zqlite-source:ro
+      # Persistent volume for built artifacts and cache
+      - zqlite-workspace:/workspace
+      # Rust cargo cache for faster builds
+      - cargo-cache:/home/developer/.cargo
+    environment:
+      # Rust configuration
+      - CARGO_HOME=/home/developer/.cargo
+      - RUSTFLAGS=-C target-cpu=native
+      # ZQLite configuration
+      - ZQLITE_DIR=/workspace/zqlite-ffi
+      - INSTALL_DIR=/workspace/zqlite-ffi
+      - GHOSTWIRE_DIR=/workspace/ghostwire
+    stdin_open: true
+    tty: true
+    networks:
+      - zqlite-net
+
+  # Development environment with hot-reload
+  zqlite-dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: zqlite-ffi-dev
+    working_dir: /workspace
+    volumes:
+      - ../:/workspace/zqlite-source:ro
+      - zqlite-dev-workspace:/workspace
+      - cargo-cache:/home/developer/.cargo
+    environment:
+      - CARGO_HOME=/home/developer/.cargo
+      - RUSTFLAGS=-C target-cpu=native
+      - ZQLITE_DIR=/workspace/zqlite-ffi
+      - RUST_LOG=debug
+    command: >
+      bash -c "
+        ./GhostwireInstall.sh &&
+        cd ghostwire &&
+        echo '🔄 Starting development server with hot-reload...' &&
+        cargo watch -x 'run --example basic_usage' -x 'test'
+      "
+    stdin_open: true
+    tty: true
+    networks:
+      - zqlite-net
+
+  # Continuous Integration testing service
+  zqlite-ci:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: zqlite-ffi-ci
+    working_dir: /workspace
+    volumes:
+      - ../:/workspace/zqlite-source:ro
+      - zqlite-ci-workspace:/workspace
+      - cargo-cache:/home/developer/.cargo
+    environment:
+      - CARGO_HOME=/home/developer/.cargo
+      - RUSTFLAGS=-C target-cpu=native
+      - ZQLITE_DIR=/workspace/zqlite-ffi
+      - CI=true
+    command: >
+      bash -c "
+        echo '🧪 Running CI tests...' &&
+        ./GhostwireInstall.sh &&
+        cd ghostwire &&
+        echo '✅ Running cargo check...' &&
+        cargo check &&
+        echo '✅ Running cargo test...' &&
+        cargo test &&
+        echo '✅ Running cargo clippy...' &&
+        cargo clippy -- -D warnings &&
+        echo '✅ Running cargo fmt check...' &&
+        cargo fmt -- --check &&
+        echo '✅ Building release version...' &&
+        cargo build --release &&
+        echo '✅ Running example...' &&
+        cargo run --example basic_usage &&
+        echo '🎉 All CI tests passed!'
+      "
+    networks:
+      - zqlite-net
+
+  # Performance testing environment
+  zqlite-bench:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: zqlite-ffi-bench
+    working_dir: /workspace
+    volumes:
+      - ../:/workspace/zqlite-source:ro
+      - zqlite-bench-workspace:/workspace
+      - cargo-cache:/home/developer/.cargo
+    environment:
+      - CARGO_HOME=/home/developer/.cargo
+      - RUSTFLAGS=-C target-cpu=native -C opt-level=3
+      - ZQLITE_DIR=/workspace/zqlite-ffi
+    command: >
+      bash -c "
+        echo '🚀 Setting up performance testing environment...' &&
+        ./GhostwireInstall.sh &&
+        cd ghostwire/zqlite-rs &&
+        echo '📊 Running benchmarks...' &&
+        cargo bench || echo 'Benchmarks completed with warnings' &&
+        echo '🔍 Performance testing finished'
+      "
+    networks:
+      - zqlite-net
+
+  # Documentation builder
+  zqlite-docs:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: zqlite-ffi-docs
+    working_dir: /workspace
+    volumes:
+      - ../:/workspace/zqlite-source:ro
+      - zqlite-docs-workspace:/workspace
+      - cargo-cache:/home/developer/.cargo
+    environment:
+      - CARGO_HOME=/home/developer/.cargo
+      - ZQLITE_DIR=/workspace/zqlite-ffi
+    command: >
+      bash -c "
+        echo '📚 Building documentation...' &&
+        ./GhostwireInstall.sh &&
+        cd ghostwire &&
+        echo '📖 Generating Rust docs...' &&
+        cargo doc --no-deps --open --offline &&
+        echo '📝 Documentation generated in target/doc/'
+      "
+    ports:
+      - "8080:8080"
+    networks:
+      - zqlite-net
+
+networks:
+  zqlite-net:
+    driver: bridge
+
+volumes:
+  # Persistent workspace for main testing
+  zqlite-workspace:
+    driver: local
+
+  # Development workspace
+  zqlite-dev-workspace:
+    driver: local
+
+  # CI workspace
+  zqlite-ci-workspace:
+    driver: local
+
+  # Benchmark workspace
+  zqlite-bench-workspace:
+    driver: local
+
+  # Documentation workspace
+  zqlite-docs-workspace:
+    driver: local
+
+  # Shared Cargo cache to speed up builds
+  cargo-cache:
+    driver: local

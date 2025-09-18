@@ -1,0 +1,55 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+zig-out/
+target/
+*.o
+*.a
+*.so
+*.exe
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+*~
+
+# IDE files
+.vscode/
+.idea/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Documentation build
+docs/
+
+# Test artifacts
+ghostwire/
+zqlite-ffi/
+
+# Cache directories
+.cargo/
+node_modules/
+
+# Coverage reports
+coverage/
+lcov.info
+
+# Benchmark results
+target/criterion/
+
+# Examples that might have been built
+examples/target/
