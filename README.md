@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="assets/zqlite-logo.png" alt="ZQLite Logo" width="200" height="200">
+</div>
+
 # ZQLite v0.8.0 🚀🔐
 
 ![Build](https://img.shields.io/github/actions/workflow/status/ghostkellz/zqlite/ci.yml?style=flat-square)
