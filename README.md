@@ -2,44 +2,45 @@
   <img src="assets/zqlite-logo.png" alt="ZQLite Logo" width="200" height="200">
 </div>
 
-# ZQLite v0.8.0 🚀🔐
+# zqlite 🚀🔐
 
-![Build](https://img.shields.io/github/actions/workflow/status/ghostkellz/zqlite/ci.yml?style=flat-square)
 ![Zig](https://img.shields.io/badge/zig-0.15.0+-f7a41d?style=flat-square)
 ![Status](https://img.shields.io/badge/status-production--ready-green?style=flat-square)
 ![Crypto](https://img.shields.io/badge/crypto-post--quantum-blueviolet?style=flat-square)
 ![ZKP](https://img.shields.io/badge/ZKP-bulletproofs-orange?style=flat-square)
+![Platform](https://img.shields.io/badge/platform-cross--platform-lightgrey?style=flat-square)
+![Performance](https://img.shields.io/badge/performance-high--speed-brightgreen?style=flat-square)
 
-> **Next-generation post-quantum cryptographic database for Zig applications**  
-> Powered by zcrypto v0.5.0 with ML-KEM, ML-DSA, Zero-Knowledge Proofs, and Hybrid Crypto
+> **Next-generation post-quantum cryptographic database and query engine for Zig**
+> A standalone embedded database that can serve as a drop-in replacement for SQLite or PostgreSQL, with optional post-quantum cryptographic features. Powers [Ghostchain](https://github.com/ghostkellz/ghostchain) and [Ghostwire](https://github.com/ghostkellz/ghostwire) for quantum-safe distributed systems.
 
 ---
 
-## 🌟 What's New in v0.8.0
+## 🌟 Key Features
 
-### 🚀 **ZNS Integration & Ghostchain Compatibility**
-- **ZNS Adapter**: Native support for Zcrypto Name System (ENS for Ghostchain)
+### 🚀 **CNS Integration & Ghostchain Compatibility**
+- **CNS Adapter**: Native support for Crypto Name Server (see [CNS](https://github.com/ghostkellz/ghostchain))
 - **Domain-Specific Crypto**: Specialized hash functions for DNS record security
 - **Ghostchain Addresses**: Generate and validate quantum-safe blockchain addresses
-- **ENS Compatibility**: Seamless integration with decentralized name systems
+- **Decentralized Name Resolution**: Seamless integration with distributed name systems
 
-### 🔮 **Enhanced Post-Quantum Security**
-- **Complete Shroud Integration**: Full ML-KEM-768 and ML-DSA-65 implementations
-- **Production-Ready PQ Crypto**: No more mock keypairs - actual quantum-safe keys
-- **Hybrid Signatures**: Classical + post-quantum for maximum security
-- **Hash Verification System**: Dependency integrity and stability monitoring
+### 🔮 **Post-Quantum Cryptographic Database**
+- **ML-KEM-768 & ML-DSA-65**: NIST-standardized post-quantum algorithms
+- **Quantum-Safe Storage**: Future-proof your data against quantum computers
+- **Hybrid Cryptography**: Classical + post-quantum for migration safety
+- **Embedded Security**: Zero-configuration quantum-resistant database
 
-### 🛡️ **Security & Stability Improvements**
-- **Dependency Hash Verification**: Prevent supply chain attacks
-- **Stability Monitoring**: Real-time crypto operation health checks
-- **Error Rate Tracking**: Comprehensive system reliability metrics
-- **Fallback Mechanisms**: Graceful degradation when advanced crypto unavailable
+### 🗃️ **Traditional Database Compatibility**
+- **SQLite Replacement**: Drop-in replacement for embedded applications
+- **PostgreSQL Features**: Advanced SQL features and data types
+- **Fast Performance**: B-tree storage with Write-Ahead Logging (WAL)
+- **Zero Configuration**: Single-file database, no server setup required
 
-### 🌐 **World's First Post-Quantum QUIC Database**
-- Quantum-safe transport layer with zcrypto v0.5.0
-- High-performance packet encryption/decryption
-- Hybrid key exchange (X25519 + ML-KEM-768)
-- Zero-RTT connection establishment
+### 🌐 **High-Performance Networking**
+- **Post-Quantum QUIC**: Quantum-safe transport layer
+- **Zero-Copy Operations**: Minimal memory overhead for high throughput
+- **Hybrid Key Exchange**: X25519 + ML-KEM-768 for secure connections
+- **Real-time Encryption**: >10M packets/sec encryption performance
 
 ### 🔬 **Advanced Cryptographic Features**
 - **Bulletproof Range Proofs**: Prove values without revealing them
@@ -56,7 +57,12 @@
 curl -sSL https://raw.githubusercontent.com/ghostkellz/zqlite/main/install.sh | bash
 ```
 
-### Manual Installation  
+### Zig Integration
+```bash
+zig fetch --save https://github.com/ghostkellz/zqlite/archive/refs/heads/main.tar.gz
+```
+
+### Manual Installation
 ```bash
 git clone https://github.com/ghostkellz/zqlite
 cd zqlite
@@ -69,8 +75,8 @@ zig build
 # Showcase all new features
 zig build run-pq-showcase
 
-# ZNS Ghostchain integration demo
-zig build run-zns-demo
+# CNS Ghostchain integration demo
+zig build run-cns-demo
 
 # Banking system with hybrid crypto
 zig build run-banking
@@ -147,26 +153,26 @@ const signature = try engine.signTransaction("TRANSFER 1000 COINS");
 const valid = try engine.verifyTransaction("TRANSFER 1000 COINS", signature);
 ```
 
-### ZNS Integration
+### CNS Integration
 ```zig
-const zns_adapter = @import("zqlite").zns_adapter;
+const cns_adapter = @import("zqlite").cns_adapter;
 
-// Create ZNS database for Ghostchain
-var zns_db = try zns_adapter.ZNSDatabase.init(allocator, crypto_config);
-defer zns_db.deinit();
+// Create CNS database for Ghostchain
+var cns_db = try cns_adapter.CNSDatabase.init(allocator, crypto_config);
+defer cns_db.deinit();
 
 // Store Ghostchain address record
-const record = zns_adapter.ZNSAdapter.ZNSRecord{
+const record = cns_adapter.CNSAdapter.CNSRecord{
     .domain = "example.ghost",
     .record_type = .GHOSTCHAIN_ADDR,
     .value = "ghost1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
     .signature = null,
     .timestamp = std.time.timestamp(),
 };
-try zns_db.storeRecord(record);
+try cns_db.storeRecord(record);
 
 // Resolve Ghostchain address
-const address = zns_db.resolveGhostchainAddress("example.ghost");
+const address = cns_db.resolveGhostchainAddress("example.ghost");
 ```
 
 ### Zero-Knowledge Proofs
@@ -203,7 +209,7 @@ const result = try db_transport.executeQuery(conn_id, "SELECT * FROM accounts");
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    ZQLite v0.5.0 Architecture              │
+│                    zqlite Architecture                     │
 ├─────────────────────────────────────────────────────────────┤
 │  SQL Interface & CLI  │  Examples & Demos  │  Public API   │
 ├─────────────────────────────────────────────────────────────┤
@@ -213,7 +219,7 @@ const result = try db_transport.executeQuery(conn_id, "SELECT * FROM accounts");
 │  │  ML-KEM + X25519│ │  Bulletproofs   │ │ Ed25519+MLDSA│ │
 │  └─────────────────┘ └─────────────────┘ └──────────────┘ │
 ├─────────────────────────────────────────────────────────────┤
-│              Enhanced Crypto Engine (zcrypto v0.5.0)       │
+│              Enhanced Crypto Engine (zcrypto)              │
 │  ┌─────────────────┐ ┌─────────────────┐ ┌──────────────┐ │
 │  │  ML-KEM-768    │ │   ML-DSA-65     │ │  ChaCha20    │ │
 │  │  Post-Quantum  │ │  PQ Signatures  │ │  Poly1305    │ │
@@ -235,7 +241,7 @@ const result = try db_transport.executeQuery(conn_id, "SELECT * FROM accounts");
 
 ## 📊 Performance
 
-ZQLite v0.8.0 delivers cutting-edge performance:
+zqlite delivers cutting-edge performance:
 
 ### Post-Quantum Operations
 - **ML-KEM-768 Keygen**: >50,000 ops/sec
@@ -316,13 +322,11 @@ zig build test -- --filter "zkp"
 
 ## 📈 Roadmap
 
-### v0.6.0 (Q2 2024)
+### Future Enhancements
 - **Formal Verification**: Mathematical proof of security properties
 - **Hardware Security Modules**: HSM integration for key storage
 - **Machine Learning Security**: AI-powered threat detection
 - **Quantum Key Distribution**: QKD protocol support
-
-### v0.7.0 (Q3 2024)
 - **Multi-Party Computation**: Secure distributed queries
 - **Homomorphic Encryption**: Compute on encrypted data
 - **Advanced ZKP**: Recursive proofs and STARKs
@@ -332,7 +336,7 @@ zig build test -- --filter "zkp"
 
 ## 🤝 Contributing
 
-We welcome contributions! ZQLite v0.5.0 represents the cutting edge of cryptographic database technology.
+We welcome contributions! zqlite represents the cutting edge of cryptographic database technology.
 
 ### Getting Started
 1. Fork the repository
@@ -358,7 +362,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## 🙏 Acknowledgments
 
-- **zcrypto v0.5.0**: [@ghostkellz](https://github.com/ghostkellz) for world-class post-quantum cryptography
+- **zcrypto**: [@ghostkellz](https://github.com/ghostkellz) for world-class post-quantum cryptography
 - **NIST**: For standardizing ML-KEM and ML-DSA algorithms
 - **Zig Team**: For the amazing systems programming language
 - **Community**: For feedback, testing, and contributions
@@ -374,6 +378,6 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ---
 
-**🚀 ZQLite v0.5.0 - The world's most advanced post-quantum cryptographic database!**
+**🚀 zqlite - The world's most advanced post-quantum cryptographic database!**
 
 *Ready for the quantum computing era* 🌟
