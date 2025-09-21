@@ -47,6 +47,7 @@ pub const SelectStatement = struct {
 
     pub fn deinit(self: *SelectStatement, allocator: std.mem.Allocator) void {
         for (self.columns) |*column| {
+            allocator.free(column.name);
             column.expression.deinit(allocator);
             if (column.alias) |alias| {
                 allocator.free(alias);

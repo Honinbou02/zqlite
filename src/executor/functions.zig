@@ -23,6 +23,12 @@ pub const FunctionEvaluator = struct {
         
         if (std.mem.eql(u8, lower_name, "now")) {
             return self.evalNow(function_call.arguments);
+        } else if (std.mem.eql(u8, lower_name, "current_timestamp")) {
+            return self.evalCurrentTimestamp(function_call.arguments);
+        } else if (std.mem.eql(u8, lower_name, "current_date")) {
+            return self.evalCurrentDate(function_call.arguments);
+        } else if (std.mem.eql(u8, lower_name, "current_time")) {
+            return self.evalCurrentTime(function_call.arguments);
         } else if (std.mem.eql(u8, lower_name, "datetime")) {
             return self.evalDatetime(function_call.arguments);
         } else if (std.mem.eql(u8, lower_name, "strftime")) {
@@ -264,24 +270,61 @@ pub const FunctionEvaluator = struct {
             else => return error.InvalidArgumentType,
         }
     }
-    
+
+    fn evalCurrentTimestamp(self: *Self, arguments: []ast.FunctionArgument) !storage.Value {
+        if (arguments.len != 0) {
+            return error.InvalidArgumentCount;
+        }
+
+        // Return current timestamp as ISO 8601 string
+        const timestamp = std.time.timestamp();
+        const datetime_str = try self.formatTimestamp(timestamp);
+        return storage.Value{ .Text = datetime_str };
+    }
+
+    fn evalCurrentDate(self: *Self, arguments: []ast.FunctionArgument) !storage.Value {
+        if (arguments.len != 0) {
+            return error.InvalidArgumentCount;
+        }
+
+        // Return current date as YYYY-MM-DD string
+        const timestamp = std.time.timestamp();
+        const date_str = try self.formatDate(timestamp);
+        return storage.Value{ .Text = date_str };
+    }
+
+    fn evalCurrentTime(self: *Self, arguments: []ast.FunctionArgument) !storage.Value {
+        if (arguments.len != 0) {
+            return error.InvalidArgumentCount;
+        }
+
+        // Return current time as HH:MM:SS string
+        const timestamp = std.time.timestamp();
+        const time_str = try self.formatTime(timestamp);
+        return storage.Value{ .Text = time_str };
+    }
+
     fn formatTimestamp(self: *Self, timestamp: i64) ![]u8 {
         // Format as ISO 8601: YYYY-MM-DD HH:MM:SS
-        const epoch_seconds = @as(u64, @intCast(timestamp));
-        const epoch_day = epoch_seconds / 86400;
+        // Use a more accurate approach for current timestamps
+        const epoch_seconds = @as(u64, @intCast(@max(timestamp, 0)));
+
+        // Convert to time components (simplified for now - use proper calendar math in production)
+        const days_since_epoch = epoch_seconds / 86400;
         const seconds_in_day = epoch_seconds % 86400;
-        
-        // Calculate year, month, day (simplified algorithm)
-        const days_since_epoch = @as(i32, @intCast(epoch_day));
-        const year = 1970 + @divFloor(days_since_epoch, 365); // Approximation
-        const month = 1 + @mod(@divFloor(days_since_epoch, 30), 12); // Approximation
-        const day = 1 + @mod(days_since_epoch, 30); // Approximation
-        
+
+        // Approximate year (more accurate would be complex)
+        const year = 1970 + (days_since_epoch / 365);
+        // Simplified month/day
+        const day_in_year = days_since_epoch % 365;
+        const month = 1 + (day_in_year / 30);
+        const day = 1 + (day_in_year % 30);
+
         const hour = seconds_in_day / 3600;
         const minute = (seconds_in_day % 3600) / 60;
         const second = seconds_in_day % 60;
-        
-        return std.fmt.allocPrint(self.allocator, "{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}", .{
+
+        return std.fmt.allocPrint(self.allocator, "{d:4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}", .{
             year, month, day, hour, minute, second
         });
     }
@@ -303,15 +346,16 @@ pub const FunctionEvaluator = struct {
     }
     
     fn formatDate(self: *Self, timestamp: i64) ![]u8 {
-        const epoch_seconds = @as(u64, @intCast(timestamp));
-        const epoch_day = epoch_seconds / 86400;
-        const days_since_epoch = @as(i32, @intCast(epoch_day));
-        
-        const year = 1970 + @divFloor(days_since_epoch, 365);
-        const month = 1 + @mod(@divFloor(days_since_epoch, 30), 12);
-        const day = 1 + @mod(days_since_epoch, 30);
-        
-        return std.fmt.allocPrint(self.allocator, "{d:0>4}-{d:0>2}-{d:0>2}", .{
+        const epoch_seconds = @as(u64, @intCast(@max(timestamp, 0)));
+        const days_since_epoch = epoch_seconds / 86400;
+
+        // Approximate year (simplified)
+        const year = 1970 + (days_since_epoch / 365);
+        const day_in_year = days_since_epoch % 365;
+        const month = 1 + (day_in_year / 30);
+        const day = 1 + (day_in_year % 30);
+
+        return std.fmt.allocPrint(self.allocator, "{d:4}-{d:0>2}-{d:0>2}", .{
             year, month, day
         });
     }

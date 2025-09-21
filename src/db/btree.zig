@@ -24,6 +24,7 @@ pub const BTree = struct {
 
         // Initialize root as leaf node
         var root_node = try Node.initLeaf(allocator, tree.order);
+        defer root_node.deinit(allocator); // Clean up after writing to storage
         try tree.writeNode(tree.root_page, &root_node);
 
         return tree;
@@ -415,7 +416,33 @@ pub const BTree = struct {
 
     /// Clean up B-tree
     pub fn deinit(self: *Self) void {
+        // Recursively clean up all nodes starting from root
+        self.cleanupNodeRecursive(self.root_page) catch {
+            // If cleanup fails, we still need to free the BTree struct
+            // This is a best-effort cleanup to prevent memory leaks
+        };
+
         self.allocator.destroy(self);
+    }
+
+    /// Recursively clean up a node and all its children
+    fn cleanupNodeRecursive(self: *Self, page_id: u32) !void {
+        var node = self.readNode(page_id) catch {
+            // If we can't read the node, skip it (might be already freed)
+            return;
+        };
+        defer node.deinit(self.allocator);
+
+        // If it's an internal node, recursively clean up children
+        if (!node.is_leaf) {
+            for (node.children[0..node.key_count + 1]) |child_page| {
+                if (child_page > 0) {
+                    self.cleanupNodeRecursive(child_page) catch {
+                        // Continue cleanup even if some children fail
+                    };
+                }
+            }
+        }
     }
 };
 

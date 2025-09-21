@@ -396,8 +396,14 @@ pub const ResultSet = struct {
             self.allocator.free(name);
         }
         self.allocator.free(self.column_names);
-        
-        // Clean up rows (they're managed by the underlying ExecutionResult)
+
+        // Clean up rows and their values (ownership was transferred from ExecutionResult)
+        for (self.rows.items) |row| {
+            for (row.values) |value| {
+                value.deinit(self.allocator);
+            }
+            self.allocator.free(row.values);
+        }
         self.rows.deinit();
     }
 };

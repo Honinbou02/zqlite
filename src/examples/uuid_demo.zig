@@ -37,7 +37,7 @@ pub fn main() !void {
         }
         
         // Test UUID in database
-        const conn = try zqlite.openMemory();
+        var conn = try zqlite.openMemory(allocator);
         defer conn.close();
         
         try conn.execute("CREATE TABLE users (id UUID PRIMARY KEY, name TEXT);");

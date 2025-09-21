@@ -3,11 +3,15 @@ const zqlite = @import("zqlite");
 
 /// Demonstration of ZQLite integration with Ghostwire-style coordination server
 pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
     std.debug.print("🚀 ZQLite + Ghostwire Integration Demo\n", .{});
     std.debug.print("=====================================\n\n", .{});
 
     // Open in-memory database for demo
-    var conn = try zqlite.openMemory();
+    var conn = try zqlite.openMemory(allocator);
     defer conn.close();
 
     // Create Ghostwire-style database schema

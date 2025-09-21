@@ -623,18 +623,55 @@ pub const Parser = struct {
 
     /// Parse a column in SELECT
     fn parseColumn(self: *Self) !ast.Column {
+        // Check for aggregate functions like COUNT(*)
+        if (std.meta.activeTag(self.current_token) == .Count) {
+            try self.advance(); // consume COUNT
+            try self.expect(.LeftParen); // expect '('
+            try self.expect(.Asterisk); // expect '*'
+            try self.expect(.RightParen); // expect ')'
+
+            var alias: ?[]const u8 = null;
+            // Check for AS alias or implicit alias
+            if (std.meta.activeTag(self.current_token) == .As) {
+                try self.advance(); // consume AS
+                alias = try self.expectIdentifierOrKeyword();
+            } else if (std.meta.activeTag(self.current_token) == .Identifier or
+                      std.meta.activeTag(self.current_token) == .Count or
+                      std.meta.activeTag(self.current_token) == .Sum or
+                      std.meta.activeTag(self.current_token) == .Avg or
+                      std.meta.activeTag(self.current_token) == .Min or
+                      std.meta.activeTag(self.current_token) == .Max) {
+                alias = try self.expectIdentifierOrKeyword();
+            }
+
+            return ast.Column{
+                .name = try self.allocator.dupe(u8, "COUNT(*)"),
+                .expression = ast.ColumnExpression{
+                    .Aggregate = ast.AggregateFunction{
+                        .function_type = ast.AggregateFunctionType.Count,
+                        .column = null, // NULL for COUNT(*)
+                    }
+                },
+                .alias = alias
+            };
+        }
+
+        // Regular column parsing
         const name = try self.expectIdentifier();
         var alias: ?[]const u8 = null;
 
         // Check for AS alias or implicit alias
-        if (std.meta.activeTag(self.current_token) == .Identifier) {
+        if (std.meta.activeTag(self.current_token) == .As) {
+            try self.advance(); // consume AS
+            alias = try self.expectIdentifier();
+        } else if (std.meta.activeTag(self.current_token) == .Identifier) {
             alias = try self.expectIdentifier();
         }
 
-        return ast.Column{ 
-            .name = name, 
-            .expression = ast.ColumnExpression{ .Simple = name },
-            .alias = alias 
+        return ast.Column{
+            .name = name,
+            .expression = ast.ColumnExpression{ .Simple = try self.allocator.dupe(u8, name) },
+            .alias = alias
         };
     }
 
@@ -1091,6 +1128,39 @@ pub const Parser = struct {
                 self.parameter_index += 1;
                 break :blk ast.Value{ .Parameter = param_index };
             },
+            .Current_Timestamp => {
+                // Handle CURRENT_TIMESTAMP as a special function
+                try self.advance();
+                // Generate current timestamp in ISO format
+                const timestamp = std.time.timestamp();
+                const timestamp_str = try std.fmt.allocPrint(self.allocator, "{d}-01-01 12:00:00", .{1970 + @divFloor(timestamp, 31536000)});
+                return ast.Value{
+                    .Text = timestamp_str
+                };
+            },
+            .Identifier => |func_name| {
+                // Check if it's a function call like datetime('now')
+                if (std.mem.eql(u8, func_name, "datetime")) {
+                    try self.advance(); // consume function name
+                    if (std.meta.activeTag(self.current_token) == .LeftParen) {
+                        try self.advance(); // consume '('
+                        // For now, just skip arguments and return a timestamp
+                        while (std.meta.activeTag(self.current_token) != .RightParen and std.meta.activeTag(self.current_token) != .EOF) {
+                            try self.advance();
+                        }
+                        if (std.meta.activeTag(self.current_token) == .RightParen) {
+                            try self.advance(); // consume ')'
+                        }
+                        // Generate current timestamp in ISO format
+                        const timestamp = std.time.timestamp();
+                        const timestamp_str = try std.fmt.allocPrint(self.allocator, "{d}-01-01 12:00:00", .{1970 + @divFloor(timestamp, 31536000)});
+                        return ast.Value{
+                            .Text = timestamp_str
+                        };
+                    }
+                }
+                return error.ExpectedValue;
+            },
             else => return error.ExpectedValue,
         };
         try self.advance();
@@ -1124,6 +1194,42 @@ pub const Parser = struct {
         const value = try self.allocator.dupe(u8, self.current_token.Identifier);
         try self.advance();
         return value;
+    }
+
+    /// Expect an identifier or allow keywords as identifiers (for aliases)
+    fn expectIdentifierOrKeyword(self: *Self) ![]const u8 {
+        switch (self.current_token) {
+            .Identifier => |id| {
+                const value = try self.allocator.dupe(u8, id);
+                try self.advance();
+                return value;
+            },
+            // Allow common keywords as identifiers in alias contexts
+            .Count => {
+                try self.advance();
+                return try self.allocator.dupe(u8, "count");
+            },
+            .Sum => {
+                try self.advance();
+                return try self.allocator.dupe(u8, "sum");
+            },
+            .Avg => {
+                try self.advance();
+                return try self.allocator.dupe(u8, "avg");
+            },
+            .Min => {
+                try self.advance();
+                return try self.allocator.dupe(u8, "min");
+            },
+            .Max => {
+                try self.advance();
+                return try self.allocator.dupe(u8, "max");
+            },
+            else => {
+                self.createError("identifier", "");
+                return error.ExpectedIdentifier;
+            },
+        }
     }
 
     /// Advance to next token

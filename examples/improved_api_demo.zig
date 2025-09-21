@@ -11,7 +11,7 @@ pub fn main() !void {
     std.debug.print("   Testing: DEFAULT clauses, simplified binding, transactions, migrations\n\n", .{});
 
     // Open database connection
-    var conn = try zqlite.openMemory();
+    var conn = try zqlite.openMemory(allocator);
     defer conn.deinit();
 
     try demoMigrationSystem(allocator, conn);

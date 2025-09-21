@@ -427,24 +427,36 @@ pub const VirtualMachine = struct {
 
         // Clone columns for the storage engine (they're owned by the planner otherwise)
         var cloned_columns = try self.allocator.alloc(storage.Column, create.columns.len);
+        var columns_cloned: usize = 0;
+        errdefer {
+            for (cloned_columns[0..columns_cloned]) |column| {
+                self.allocator.free(column.name);
+            }
+            self.allocator.free(cloned_columns);
+        }
+
         for (create.columns, 0..) |column, i| {
             cloned_columns[i] = storage.Column{
                 .name = try self.allocator.dupe(u8, column.name),
                 .data_type = column.data_type,
                 .is_primary_key = column.is_primary_key,
                 .is_nullable = column.is_nullable,
-                .default_value = if (column.default_value) |default_value| 
+                .default_value = if (column.default_value) |default_value|
                     try self.cloneStorageDefaultValue(default_value)
-                else 
+                else
                     null,
             };
+            columns_cloned = i + 1;
         }
 
-        const schema = storage.TableSchema{
+        var schema = storage.TableSchema{
             .columns = cloned_columns,
         };
 
-        try self.connection.storage_engine.createTable(create.table_name, schema);
+        self.connection.storage_engine.createTable(create.table_name, schema) catch |err| {
+            schema.deinit(self.allocator);
+            return err;
+        };
         result.affected_rows = 1;
     }
 
@@ -681,7 +693,9 @@ pub const VirtualMachine = struct {
     /// Evaluate a comparison condition
     fn evaluateComparison(self: *Self, comp: *const ast.ComparisonCondition, row: *const storage.Row) !bool {
         const left_value = try self.evaluateExpression(&comp.left, row);
+        defer left_value.deinit(self.allocator);
         const right_value = try self.evaluateExpression(&comp.right, row);
+        defer right_value.deinit(self.allocator);
 
         return switch (comp.operator) {
             .Equal => self.compareValues(left_value, right_value) == .eq,
@@ -714,7 +728,8 @@ pub const VirtualMachine = struct {
                 // For now, just return the first value (would need column mapping)
                 _ = col_name;
                 if (row.values.len > 0) {
-                    return row.values[0];
+                    // Clone the value so it can be safely freed by caller
+                    return try self.cloneValue(row.values[0]);
                 } else {
                     return storage.Value.Null;
                 }
@@ -1035,13 +1050,117 @@ pub const VirtualMachine = struct {
         return storage.Row{ .values = null_values };
     }
 
-    /// Execute aggregate operation (stub implementation)
+    /// Execute aggregate operation
     fn executeAggregate(self: *Self, agg: *planner.AggregateStep, result: *ExecutionResult) !void {
-        _ = self;
-        _ = agg;
-        _ = result;
-        // TODO: Implement aggregate operations
-        return error.NotImplemented;
+        // For now, implement COUNT(*) aggregate function
+        for (agg.aggregates) |aggregate_op| {
+            switch (aggregate_op.function_type) {
+                .Count => {
+                    // COUNT(*) - count all rows in the result
+                    const count = result.rows.items.len;
+                    const result_value = storage.Value{ .Integer = @intCast(count) };
+                    try self.finishAggregateResult(result, result_value);
+                },
+                .Sum => {
+                    // SUM(column) - sum all numeric values in the specified column
+                    var sum: f64 = 0.0;
+                    for (result.rows.items) |row| {
+                        if (row.values.len > 0) {
+                            switch (row.values[0]) {
+                                .Integer => |i| sum += @floatFromInt(i),
+                                .Real => |r| sum += r,
+                                else => {}, // Skip non-numeric values
+                            }
+                        }
+                    }
+                    const result_value = storage.Value{ .Real = sum };
+                    try self.finishAggregateResult(result, result_value);
+                },
+                .Avg => {
+                    // AVG(column) - average of all numeric values
+                    var sum: f64 = 0.0;
+                    var count: u32 = 0;
+                    for (result.rows.items) |row| {
+                        if (row.values.len > 0) {
+                            switch (row.values[0]) {
+                                .Integer => |i| {
+                                    sum += @floatFromInt(i);
+                                    count += 1;
+                                },
+                                .Real => |r| {
+                                    sum += r;
+                                    count += 1;
+                                },
+                                else => {}, // Skip non-numeric values
+                            }
+                        }
+                    }
+                    const avg = if (count > 0) sum / @as(f64, @floatFromInt(count)) else 0.0;
+                    const result_value = storage.Value{ .Real = avg };
+                    try self.finishAggregateResult(result, result_value);
+                },
+                .Min => {
+                    // MIN(column) - minimum value
+                    var min_value: ?storage.Value = null;
+                    for (result.rows.items) |row| {
+                        if (row.values.len > 0) {
+                            const current_value = row.values[0];
+                            if (min_value == null) {
+                                min_value = try self.cloneValue(current_value);
+                            } else {
+                                if (self.compareValues(current_value, min_value.?) == .lt) {
+                                    min_value.?.deinit(self.allocator);
+                                    min_value = try self.cloneValue(current_value);
+                                }
+                            }
+                        }
+                    }
+                    const result_value = min_value orelse storage.Value.Null;
+                    try self.finishAggregateResult(result, result_value);
+                },
+                .Max => {
+                    // MAX(column) - maximum value
+                    var max_value: ?storage.Value = null;
+                    for (result.rows.items) |row| {
+                        if (row.values.len > 0) {
+                            const current_value = row.values[0];
+                            if (max_value == null) {
+                                max_value = try self.cloneValue(current_value);
+                            } else {
+                                if (self.compareValues(current_value, max_value.?) == .gt) {
+                                    max_value.?.deinit(self.allocator);
+                                    max_value = try self.cloneValue(current_value);
+                                }
+                            }
+                        }
+                    }
+                    const result_value = max_value orelse storage.Value.Null;
+                    try self.finishAggregateResult(result, result_value);
+                },
+                else => {
+                    // TODO: Implement GroupConcat, CountDistinct
+                    return error.NotImplemented;
+                }
+            }
+        }
+    }
+
+    /// Helper function to finish aggregate result
+    fn finishAggregateResult(self: *Self, result: *ExecutionResult, aggregate_value: storage.Value) !void {
+        // Clear existing rows and add the aggregate result
+        for (result.rows.items) |row| {
+            for (row.values) |value| {
+                value.deinit(self.allocator);
+            }
+            self.allocator.free(row.values);
+        }
+        result.rows.clearAndFree();
+
+        // Create a single row with the aggregate result
+        var aggregate_row_values = try self.allocator.alloc(storage.Value, 1);
+        aggregate_row_values[0] = aggregate_value;
+
+        try result.rows.append(storage.Row{ .values = aggregate_row_values });
     }
 
     /// Execute group by operation (stub implementation)

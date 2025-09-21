@@ -9,7 +9,7 @@ pub fn main() !void {
     std.debug.print("🎯 zqlite PostgreSQL Array Operations Demo\n\n", .{});
 
     // Create in-memory database
-    const conn = try zqlite.openMemory();
+    var conn = try zqlite.openMemory(allocator);
     defer conn.close();
 
     // Create table with array columns

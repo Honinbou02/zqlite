@@ -217,14 +217,11 @@ pub const TableSchema = struct {
     columns: []Column,
 
     pub fn deinit(self: *TableSchema, allocator: std.mem.Allocator) void {
-        // TODO: Fix memory management - currently disabled to prevent crashes
-        // The columns are allocated by the parser but freed by storage engine
-        // with different allocators, causing segfaults
-        _ = self;
-        _ = allocator;
-        
-        // Skip cleanup for now - this is a memory leak but prevents crashes
-        // Will be fixed in a future version when allocator management is unified
+        // Clean up column names (now that allocator consistency is fixed)
+        for (self.columns) |column| {
+            allocator.free(column.name);
+        }
+        allocator.free(self.columns);
     }
 };
 

@@ -15,7 +15,7 @@ pub fn main() !void {
     std.debug.print("✅ Created query cache (100 entries, 1MB limit)\n\n", .{});
 
     // Create in-memory database
-    const conn = try zqlite.openMemory();
+    var conn = try zqlite.openMemory(allocator);
     defer conn.close();
 
     // Set up test data
