@@ -1,5 +1,8 @@
 const std = @import("std");
 
+// Version information
+pub const version = @import("version.zig");
+
 // New data structures for v1.2.5
 pub const OpenOptions = struct {
     enable_async: bool = false,
@@ -114,17 +117,16 @@ else
 // Advanced indexing
 pub const advanced_indexes = @import("indexing/advanced_indexes.zig");
 
-// Version and metadata
-pub const version = "1.3.0";
-pub const build_info = "zqlite " ++ version ++ " - PostgreSQL-compatible embedded database with enterprise features";
+// Version and metadata - now centralized in version.zig
+pub const build_info = version.FULL_VERSION_STRING ++ " - PostgreSQL-compatible embedded database with enterprise features";
 
 // Main API functions
-pub fn open(path: []const u8) !*db.Connection {
-    return db.Connection.open(path);
+pub fn open(allocator: std.mem.Allocator, path: []const u8) !*db.Connection {
+    return db.Connection.open(allocator, path);
 }
 
-pub fn openMemory() !*db.Connection {
-    return db.Connection.openMemory();
+pub fn openMemory(allocator: std.mem.Allocator) !*db.Connection {
+    return db.Connection.openMemory(allocator);
 }
 
 /// Create connection pool for high-concurrency applications

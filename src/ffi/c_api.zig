@@ -271,7 +271,7 @@ export fn zqlite_errmsg(conn: ?*zqlite_connection_t) [*:0]const u8 {
 
 /// Get the version string
 export fn zqlite_version() [*:0]const u8 {
-    return zqlite.version.ptr;
+    return zqlite.version.VERSION_STRING.ptr;
 }
 
 /// Cleanup global resources

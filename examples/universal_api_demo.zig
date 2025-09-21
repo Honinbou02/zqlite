@@ -1,20 +1,20 @@
 const std = @import("std");
 const zqlite = @import("zqlite");
 
-/// ZQLite v1.2.2 Universal API Demo
+/// ZQLite Universal API Demo
 /// Shows how non-crypto applications can leverage zqlite's broad API surfaces
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    std.debug.print("🚀 ZQLite v1.2.2 - Universal Database API Demo\n", .{});
+    std.debug.print("🚀 {s} - Universal Database API Demo\n", .{zqlite.version.FULL_VERSION_STRING});
     std.debug.print("   SQLite watch out! Here comes the competition! 🏆\n\n", .{});
 
     // Test 1: Basic CRUD operations with new API
     std.debug.print("📊 Test 1: CRUD Operations with New API\n", .{});
     
-    var conn = try zqlite.openMemory();
+    var conn = try zqlite.openMemory(allocator);
     defer conn.close();
 
     // Create users table
@@ -133,6 +133,7 @@ pub fn main() !void {
     
     const table_names = try conn.getTableNames();
     defer {
+        // Note: getTableNames() now uses the same allocator as the connection
         for (table_names) |name| {
             allocator.free(name);
         }
@@ -163,7 +164,7 @@ pub fn main() !void {
         }
     }
 
-    std.debug.print("\n🎉 ZQLite v1.2.2 Universal API Demo Complete!\n", .{});
+    std.debug.print("\n🎉 {s} Universal API Demo Complete!\n", .{zqlite.version.FULL_VERSION_STRING});
     std.debug.print("   ✨ Perfect for any Zig application - crypto or not! ✨\n", .{});
     std.debug.print("   🏆 SQLite compatibility with modern Zig ergonomics! 🏆\n", .{});
 }

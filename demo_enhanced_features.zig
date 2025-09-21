@@ -7,10 +7,10 @@ pub fn main() !void {
     const allocator = gpa.allocator();
 
     // Create in-memory database connection
-    var connection = try zqlite.Connection.initMemory(allocator);
-    defer connection.deinit();
+    var connection = try zqlite.openMemory(allocator);
+    defer connection.close();
 
-    std.debug.print("🎉 ZQLite v1.2.3 Enhanced Features Demo\n\n", .{});
+    std.debug.print("🎉 {s} Enhanced Features Demo\n\n", .{zqlite.version.FULL_VERSION_STRING});
 
     // Test 1: Enhanced table creation with new data types and constraints
     std.debug.print("✅ Creating table with enhanced features...\n", .{});
@@ -24,24 +24,24 @@ pub fn main() !void {
         \\)
     ;
     
-    _ = try zqlite.vm.execute(&connection, &(try zqlite.parser.parse(allocator, create_sql)).statement);
+    _ = try zqlite.vm.execute(connection, &(try zqlite.parser.parse(allocator, create_sql)).statement);
     std.debug.print("   Table 'enhanced_users' created successfully!\n\n", .{});
 
     // Test 2: Enhanced INSERT with conflict resolution
     std.debug.print("✅ Testing INSERT enhancements...\n", .{});
-    _ = try zqlite.vm.execute(&connection, &(try zqlite.parser.parse(allocator, "INSERT INTO enhanced_users (name, email) VALUES ('John Doe', 'john@example.com')")).statement);
+    _ = try zqlite.vm.execute(connection, &(try zqlite.parser.parse(allocator, "INSERT INTO enhanced_users (name, email) VALUES ('John Doe', 'john@example.com')")).statement);
     std.debug.print("   User inserted successfully!\n\n", .{});
 
     // Test 3: Transaction support
     std.debug.print("✅ Testing transaction support...\n", .{});
-    _ = try zqlite.vm.execute(&connection, &(try zqlite.parser.parse(allocator, "BEGIN TRANSACTION")).statement);
-    _ = try zqlite.vm.execute(&connection, &(try zqlite.parser.parse(allocator, "INSERT INTO enhanced_users (name, email) VALUES ('Jane Doe', 'jane@example.com')")).statement);
-    _ = try zqlite.vm.execute(&connection, &(try zqlite.parser.parse(allocator, "COMMIT")).statement);
+    _ = try zqlite.vm.execute(connection, &(try zqlite.parser.parse(allocator, "BEGIN TRANSACTION")).statement);
+    _ = try zqlite.vm.execute(connection, &(try zqlite.parser.parse(allocator, "INSERT INTO enhanced_users (name, email) VALUES ('Jane Doe', 'jane@example.com')")).statement);
+    _ = try zqlite.vm.execute(connection, &(try zqlite.parser.parse(allocator, "COMMIT")).statement);
     std.debug.print("   Transaction committed successfully!\n\n", .{});
 
     // Test 4: Create index
     std.debug.print("✅ Testing index management...\n", .{});
-    _ = try zqlite.vm.execute(&connection, &(try zqlite.parser.parse(allocator, "CREATE INDEX idx_user_email ON enhanced_users (email)")).statement);
+    _ = try zqlite.vm.execute(connection, &(try zqlite.parser.parse(allocator, "CREATE INDEX idx_user_email ON enhanced_users (email)")).statement);
     std.debug.print("   Index created successfully!\n\n", .{});
 
     // Test 5: Basic query
@@ -61,7 +61,7 @@ pub fn main() !void {
     
     std.debug.print("   Found {} active users\n\n", .{results.len});
 
-    std.debug.print("🎯 ZQLite v1.2.3 Features Demonstrated:\n", .{});
+    std.debug.print("🎯 ZQLite {s} Features Demonstrated:\n", .{zqlite.version.VERSION_STRING});
     std.debug.print("   • Extended data types (DATETIME, TIMESTAMP, BOOLEAN)\n", .{});
     std.debug.print("   • DEFAULT value functions (CURRENT_TIMESTAMP)\n", .{});
     std.debug.print("   • AUTOINCREMENT support\n", .{});

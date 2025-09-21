@@ -1,7 +1,7 @@
 const std = @import("std");
 const zqlite = @import("zqlite");
 
-/// ZQLite v1.2.2 Web Backend Demo
+/// ZQLite Web Backend Demo
 /// Shows how zqlite can be used as a backend database for web applications
 /// (This is a simulation - no actual HTTP server, just the database operations)
 pub fn main() !void {
@@ -9,11 +9,11 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    std.debug.print("🌐 ZQLite v1.2.2 - Web Backend Database Demo\n", .{});
+    std.debug.print("🌐 {s} - Web Backend Database Demo\n", .{zqlite.version.FULL_VERSION_STRING});
     std.debug.print("   Simulating a blog/CMS backend with zqlite! 📝\n\n", .{});
 
     // Open persistent database (in production, this would be a real file)
-    var conn = try zqlite.openMemory(); // Using memory for demo
+    var conn = try zqlite.openMemory(allocator); // Using memory for demo
     defer conn.close();
 
     // Initialize database schema
@@ -33,7 +33,7 @@ fn setupBlogSchema(conn: *zqlite.Connection) !void {
     // Users table
     try conn.execute(
         \\CREATE TABLE users (
-        \\    id INTEGER PRIMARY KEY,
+        \\    id INTEGER PRIMARY KEY AUTOINCREMENT,
         \\    username TEXT UNIQUE NOT NULL,
         \\    email TEXT UNIQUE NOT NULL,
         \\    password_hash TEXT NOT NULL,
@@ -45,7 +45,7 @@ fn setupBlogSchema(conn: *zqlite.Connection) !void {
     // Posts table
     try conn.execute(
         \\CREATE TABLE posts (
-        \\    id INTEGER PRIMARY KEY,
+        \\    id INTEGER PRIMARY KEY AUTOINCREMENT,
         \\    title TEXT NOT NULL,
         \\    content TEXT NOT NULL,
         \\    author_id INTEGER NOT NULL,
@@ -58,7 +58,7 @@ fn setupBlogSchema(conn: *zqlite.Connection) !void {
     // Comments table
     try conn.execute(
         \\CREATE TABLE comments (
-        \\    id INTEGER PRIMARY KEY,
+        \\    id INTEGER PRIMARY KEY AUTOINCREMENT,
         \\    post_id INTEGER NOT NULL,
         \\    author_name TEXT NOT NULL,
         \\    author_email TEXT NOT NULL,
@@ -71,7 +71,7 @@ fn setupBlogSchema(conn: *zqlite.Connection) !void {
     // Tags table
     try conn.execute(
         \\CREATE TABLE tags (
-        \\    id INTEGER PRIMARY KEY,
+        \\    id INTEGER PRIMARY KEY AUTOINCREMENT,
         \\    name TEXT UNIQUE NOT NULL,
         \\    color TEXT DEFAULT '#3B82F6'
         \\)
@@ -95,13 +95,11 @@ fn simulateApiEndpoints(conn: *zqlite.Connection, allocator: std.mem.Allocator) 
     // Endpoint 1: POST /api/users (Create user)
     std.debug.print("\n📝 POST /api/users - Creating users...\n", .{});
     
-    const users_created = try conn.exec(
-        "INSERT INTO users (username, email, password_hash, is_admin) VALUES ('john_doe', 'john@example.com', 'hashed_password_123', 1)"
-    );
-    try conn.execute("INSERT INTO users (username, email, password_hash) VALUES ('jane_smith', 'jane@example.com', 'hashed_password_456')");
-    try conn.execute("INSERT INTO users (username, email, password_hash) VALUES ('bob_wilson', 'bob@example.com', 'hashed_password_789')");
+    try conn.execute("INSERT INTO users (username, email, password_hash, is_admin) VALUES ('john_doe', 'john@example.com', 'hashed_password_123', 1)");
+    try conn.execute("INSERT INTO users (username, email, password_hash, is_admin) VALUES ('jane_smith', 'jane@example.com', 'hashed_password_456', 0)");
+    try conn.execute("INSERT INTO users (username, email, password_hash, is_admin) VALUES ('bob_wilson', 'bob@example.com', 'hashed_password_789', 0)");
     
-    std.debug.print("   ✅ Created {d} admin user + 2 regular users\n", .{users_created});
+    std.debug.print("   ✅ Created 3 users (1 admin + 2 regular)\n", .{});
 
     // Endpoint 2: GET /api/users (List users)
     std.debug.print("\n👥 GET /api/users - Listing users...\n", .{});
@@ -123,6 +121,7 @@ fn simulateApiEndpoints(conn: *zqlite.Connection, allocator: std.mem.Allocator) 
     // Endpoint 3: POST /api/posts (Create posts)
     std.debug.print("\n📄 POST /api/posts - Creating blog posts...\n", .{});
     
+    // Note: Using AUTOINCREMENT, john_doe gets ID 1, jane_smith gets ID 2, bob_wilson gets ID 3
     try conn.execute(
         "INSERT INTO posts (title, content, author_id, published) VALUES ('Welcome to ZQLite!', 'This is our first post about the amazing ZQLite database...', 1, 1)"
     );
@@ -138,7 +137,7 @@ fn simulateApiEndpoints(conn: *zqlite.Connection, allocator: std.mem.Allocator) 
     try conn.execute("INSERT INTO tags (name, color) VALUES ('Zig', '#F59E0B')");
     try conn.execute("INSERT INTO tags (name, color) VALUES ('Performance', '#10B981')");
     
-    // Tag the posts
+    // Tag the posts (post IDs 1,2 and tag IDs 1,2,3 from AUTOINCREMENT)
     try conn.execute("INSERT INTO post_tags (post_id, tag_id) VALUES (1, 1), (1, 2)");
     try conn.execute("INSERT INTO post_tags (post_id, tag_id) VALUES (2, 1), (2, 3)");
 

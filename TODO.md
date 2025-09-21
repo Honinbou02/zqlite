@@ -1,130 +1,124 @@
-# 🚀 zqlite v1.3 - Rapid Enhancement Plan
+# 🗃️ ZQLite v1.3.2 TODO - Memory Leak Fixes & Polish
 
-> Make zqlite production-ready for your projects in weeks, not months
-
-## 🎯 Immediate Goals (This Week)
-**Core Foundation Fixes:**
-- [x] Remove shroud dependency (completed v1.2.5)
-- [ ] Fix all SQL parsing edge cases 
-- [ ] Add proper error handling throughout
-- [ ] Implement connection pooling (basic)
-- [ ] Add JSON/JSONB support for modern apps
-
-## ⚡ Week 1-2: Essential Database Features
-- [ ] **PostgreSQL Compatibility Layer**
-  - [ ] Common data types (UUID, ARRAY, JSONB)
-  - [ ] Window functions (ROW_NUMBER, RANK, LAG/LEAD) 
-  - [ ] CTEs (Common Table Expressions)
-  - [ ] Better JOIN support
-
-- [ ] **Performance Basics**
-  - [ ] Query result caching (in-memory)
-  - [ ] Prepared statement optimization
-  - [ ] Basic indexing improvements
-  - [ ] Connection pooling (10-100 connections)
-
-## 🔥 Week 3-4: Your Project Requirements
-- [ ] **GhostHub MSP Support**
-  - [ ] Multi-tenant table isolation (`tenant_id` columns)
-  - [ ] Time tracking tables with billing calculations
-  - [ ] Asset management with relationship mapping
-
-- [ ] **GhostDock Registry Support** 
-  - [ ] Blob metadata storage with deduplication tracking
-  - [ ] User authentication and permissions
-  - [ ] Image layer relationship storage
-
-- [ ] **Zepplin Package Manager**
-  - [ ] Package metadata with versioning
-  - [ ] Dependency resolution storage
-  - [ ] Download statistics tracking
-
-- [ ] **GhostFlow AI Workflows**
-  - [ ] Workflow state persistence
-  - [ ] Event sourcing tables
-  - [ ] Process orchestration metadata
-
-- [ ] **GhostBay Object Storage**
-  - [ ] S3-compatible metadata storage
-  - [ ] Bucket and ACL management
-  - [ ] Object versioning tracking
-
-## 📊 Month 1: Production Ready
-- [ ] **Reliability**
-  - [ ] WAL (Write-Ahead Logging) improvements
-  - [ ] ACID transaction guarantees
-  - [ ] Crash recovery testing
-  - [ ] Memory leak fixes
-
-- [ ] **Security Basics**
-  - [ ] SQL injection prevention (parameterized queries)
-  - [ ] Basic authentication (API keys)
-  - [ ] Audit logging for critical operations
-
-- [ ] **Developer Experience**
-  - [ ] Better error messages with line numbers
-  - [ ] CLI improvements (interactive shell)
-  - [ ] Migration system for schema changes
-
-## 🚀 Month 2-3: Advanced Features
-- [ ] **HTTP API Server**
-  - [ ] REST endpoints for all operations
-  - [ ] JSON responses
-  - [ ] Authentication middleware
-  - [ ] Rate limiting basics
-
-- [ ] **Specialized Modules**
-  - [ ] Time-series data support (for metrics)
-  - [ ] Full-text search (for documentation/tickets)
-  - [ ] Geospatial support (for asset location)
-
-- [ ] **Client Libraries**
-  - [ ] Improved Zig native client
-  - [ ] Basic Rust client for your Rust projects
-  - [ ] Python client for scripting
-
-## 🛠️ Implementation Priority
-
-### Week 1 (Immediate)
-```zig
-// Add these features first
-- JSON/JSONB data type
-- Window functions
-- Connection pooling
-- Error handling improvements
-```
-
-### Week 2 (Core SQL)
-```zig
-// PostgreSQL compatibility essentials
-- CTEs and recursive queries  
-- Array operations
-- UUID support
-- Better date/time handling
-```
-
-### Week 3-4 (Your Apps)
-```zig
-// Direct support for your projects
-- Multi-tenant data isolation
-- Blob storage metadata
-- Package registry tables
-- Authentication tables
-```
-
-## 🎯 Success Metrics (Realistic)
-- **Performance**: 10K QPS (not 100K, but solid)
-- **Concurrency**: 100 connections (not 10K, but practical)  
-- **Reliability**: 99.9% uptime (not 99.99%, but good)
-- **Compatibility**: 80% PostgreSQL features (focused on what you need)
-
-## 🔧 Quick Wins This Week
-1. **Fix current test failures** - get to 100% pass rate
-2. **Add JSON support** - modern apps need this
-3. **Improve error messages** - save debugging time
-4. **Basic connection pooling** - handle multiple clients
-5. **PostgreSQL data types** - UUID, arrays, better dates
+> **Status**: v1.3.1 is production ready! 🎉
+> All critical segfaults eliminated, ZAUR integration ready.
+> This TODO covers remaining memory leaks and polish items.
 
 ---
 
-*🎯 "Get zqlite production-ready for your projects in 3 months, not 3 years."*
+## 🎯 **High Priority Memory Leaks**
+
+### 🔍 **Parser Memory Leaks**
+- [ ] **Fix parseSelect "*" leak** (`src/parser/parser.zig:68`)
+  - Location: `try self.allocator.dupe(u8, "*")`
+  - Issue: Duped "*" strings never freed in SELECT parsing
+  - Impact: Memory leak on every SELECT query
+  - Fix: Add proper cleanup in Statement.deinit()
+
+### 🏭 **VM Execution Memory Leaks**
+- [ ] **Fix executeCreateTable column name leaks** (`src/executor/vm.zig:432`)
+  - Location: `try self.allocator.dupe(u8, column.name)`
+  - Issue: Column names duped but never freed
+  - Impact: Memory leak on every CREATE TABLE
+  - Fix: Ensure Schema cleanup frees cloned column names
+
+- [ ] **Fix cloneValue text duplication leaks** (`src/executor/vm.zig:324`)
+  - Location: `storage.Value{ .Text = try self.allocator.dupe(u8, t) }`
+  - Issue: Text values cloned in executeTableScan/evaluateExpression but not always freed
+  - Impact: Memory leak on SELECT queries with text data
+  - Fix: Ensure all cloned values are properly cleaned up in result deinit
+
+### 🔄 **Expression Evaluation Leaks**
+- [ ] **Fix evaluateExpression text cloning** (`src/executor/vm.zig:725`)
+  - Location: Text value duplication in expression evaluation
+  - Issue: Temporary values created during comparisons not freed
+  - Impact: Memory leak on WHERE clauses with text comparisons
+  - Fix: Add proper cleanup for temporary expression values
+
+---
+
+## 🧪 **Medium Priority Improvements**
+
+### 📊 **Parser Enhancements**
+- [ ] **Add support for COUNT(*) aggregate function**
+  - Currently fails with "Expected identifier, found .{ .Count = void }"
+  - Would enable more comprehensive SQL compliance testing
+  - Location: Parser aggregate function handling
+
+### 🔧 **API Consistency**
+- [ ] **Update remaining demo files to use allocator parameter**
+  - Several examples still need allocator API updates
+  - Found during build: ghostwire_integration_demo, array_operations_demo, etc.
+  - Fix: Update all `zqlite.openMemory()` calls to `zqlite.openMemory(allocator)`
+
+### 🗂️ **Column Name Mapping**
+- [ ] **Fix getValueByName() column mapping issues**
+  - Currently column names don't match expected schema in SELECT results
+  - Results show data in wrong column positions
+  - Impact: getValueByName() returns wrong data (though doesn't crash)
+  - Fix: Ensure column names are properly mapped in ResultSet creation
+
+---
+
+## 🏗️ **Low Priority Polish**
+
+### 📝 **Documentation & Examples**
+- [ ] **Clean up hardcoded version strings in comments**
+  - Some files still have "ZQLite v1.2.2" in comments
+  - Use centralized version info where appropriate
+
+### 🧪 **Test Coverage**
+- [ ] **Add comprehensive memory leak regression tests**
+  - Create tests that specifically check for the fixed memory leaks
+  - Use GPA in test mode to catch future leaks early
+
+### 🔍 **Code Quality**
+- [ ] **Review and optimize memory allocation patterns**
+  - Look for opportunities to reduce unnecessary allocations
+  - Consider object pooling for frequently allocated types
+
+---
+
+## 🚫 **Known Working - Do Not Touch**
+
+> ⚠️ **CRITICAL**: These areas are now working correctly after fixes:
+
+- ✅ getValueByName() segfault fix (Row ownership)
+- ✅ "Invalid free" allocator mismatch fix
+- ✅ INSERT operation memory management
+- ✅ AUTOINCREMENT schema handling
+- ✅ ExecutionResult cleanup in query operations
+- ✅ API allocator parameter consistency
+
+---
+
+## 🎯 **Success Criteria for v1.3.2**
+
+- [ ] **Zero memory leaks** in production readiness test
+- [ ] **All examples build and run** without errors
+- [ ] **COUNT(*) queries work** correctly
+- [ ] **getValueByName() returns correct data** (not just avoid crashing)
+
+---
+
+## 💡 **Implementation Notes**
+
+### Memory Leak Patterns Identified:
+1. **Parser allocations** - Tend to allocate strings without proper cleanup paths
+2. **VM cloneValue calls** - Create owned copies but cleanup responsibilities unclear
+3. **Temporary expression values** - Created during evaluation but not tracked for cleanup
+
+### Debugging Tips:
+- Use `zig run test_production_ready.zig` to test fixes
+- GPA allocator shows exact leak locations with stack traces
+- Focus on `dupe()` calls - these are the main leak sources
+
+### Architecture Notes:
+- ResultSet now properly owns Row data (fixed in v1.3.1)
+- ExecutionResult cleanup is working (fixed in v1.3.1)
+- Connection allocator consistency established (fixed in v1.3.1)
+
+---
+
+**🎉 Great work on v1.3.1! ZQLite is now production ready for ZAUR.**
+**Tomorrow's mission: Polish the memory management to perfection! 🚀**

@@ -91,8 +91,17 @@ pub const VirtualMachine = struct {
         for (rows) |row| {
             // Clone the row again for the result (since we're freeing the original)
             var cloned_values = try self.allocator.alloc(storage.Value, row.values.len);
+            var values_cloned: usize = 0;
+            errdefer {
+                for (cloned_values[0..values_cloned]) |value| {
+                    value.deinit(self.allocator);
+                }
+                self.allocator.free(cloned_values);
+            }
+
             for (row.values, 0..) |value, i| {
                 cloned_values[i] = try self.cloneValue(value);
+                values_cloned = i + 1;
             }
             try result.rows.append(storage.Row{ .values = cloned_values });
         }
@@ -362,29 +371,46 @@ pub const VirtualMachine = struct {
         };
 
         for (insert.values) |row_values| {
-            // Handle default values for missing columns
-            var final_values = try self.allocator.alloc(storage.Value, table.schema.columns.len);
-            errdefer self.allocator.free(final_values);
-            
+            // Build values incrementally to avoid uninitialized memory issues
+            var values_list = std.array_list.Managed(storage.Value).init(self.allocator);
+            defer {
+                for (values_list.items) |value| {
+                    value.deinit(self.allocator);
+                }
+                values_list.deinit();
+            }
+
             // Fill in provided values
             for (row_values, 0..) |value, i| {
-                if (i < final_values.len) {
-                    final_values[i] = try self.cloneValue(try self.resolveValue(value));
+                if (i < table.schema.columns.len) {
+                    const resolved_value = try self.cloneValue(try self.resolveValue(value));
+                    try values_list.append(resolved_value);
+                } else {
+                    break; // Too many values provided
                 }
             }
-            
+
             // Fill in default values for missing columns
-            for (row_values.len..final_values.len) |i| {
+            for (row_values.len..table.schema.columns.len) |i| {
                 if (table.schema.columns[i].default_value) |default_value| {
-                    final_values[i] = try self.evaluateStorageDefaultValue(default_value);
+                    const default_val = try self.evaluateStorageDefaultValue(default_value);
+                    try values_list.append(default_val);
                 } else if (table.schema.columns[i].is_nullable) {
-                    final_values[i] = storage.Value.Null;
+                    try values_list.append(storage.Value.Null);
                 } else {
                     // Non-nullable column without default value
-                    self.allocator.free(final_values);
                     return error.MissingRequiredValue;
                 }
             }
+
+            // Create final array and transfer ownership
+            var final_values = try self.allocator.alloc(storage.Value, values_list.items.len);
+            for (values_list.items, 0..) |value, i| {
+                final_values[i] = value;
+            }
+
+            // Clear the list without deallocating values (ownership transferred)
+            values_list.clearRetainingCapacity();
 
             const row = storage.Row{ .values = final_values };
             try table.insert(row);
@@ -462,8 +488,17 @@ pub const VirtualMachine = struct {
             if (matches) {
                 // Create updated row by cloning the original and applying changes
                 var updated_values = try self.allocator.alloc(storage.Value, row.values.len);
+                var values_cloned: usize = 0;
+                errdefer {
+                    for (updated_values[0..values_cloned]) |value| {
+                        value.deinit(self.allocator);
+                    }
+                    self.allocator.free(updated_values);
+                }
+
                 for (row.values, 0..) |value, i| {
                     updated_values[i] = try self.cloneValue(value);
+                    values_cloned = i + 1;
                 }
 
                 // Apply assignments
@@ -482,8 +517,17 @@ pub const VirtualMachine = struct {
             } else {
                 // Keep the original row unchanged
                 var cloned_values = try self.allocator.alloc(storage.Value, row.values.len);
+                var values_cloned: usize = 0;
+                errdefer {
+                    for (cloned_values[0..values_cloned]) |value| {
+                        value.deinit(self.allocator);
+                    }
+                    self.allocator.free(cloned_values);
+                }
+
                 for (row.values, 0..) |value, i| {
                     cloned_values[i] = try self.cloneValue(value);
+                    values_cloned = i + 1;
                 }
                 try updated_rows.append(storage.Row{ .values = cloned_values });
             }
@@ -506,8 +550,17 @@ pub const VirtualMachine = struct {
         for (updated_rows.items) |row| {
             // Clone the row for insertion
             var insert_values = try self.allocator.alloc(storage.Value, row.values.len);
+            var values_cloned: usize = 0;
+            errdefer {
+                for (insert_values[0..values_cloned]) |value| {
+                    value.deinit(self.allocator);
+                }
+                self.allocator.free(insert_values);
+            }
+
             for (row.values, 0..) |value, i| {
                 insert_values[i] = try self.cloneValue(value);
+                values_cloned = i + 1;
             }
             try new_table.insert(storage.Row{ .values = insert_values });
         }
@@ -557,8 +610,17 @@ pub const VirtualMachine = struct {
             } else {
                 // Keep this row - clone it for the surviving rows
                 var cloned_values = try self.allocator.alloc(storage.Value, row.values.len);
+                var values_cloned: usize = 0;
+                errdefer {
+                    for (cloned_values[0..values_cloned]) |value| {
+                        value.deinit(self.allocator);
+                    }
+                    self.allocator.free(cloned_values);
+                }
+
                 for (row.values, 0..) |value, i| {
                     cloned_values[i] = try self.cloneValue(value);
+                    values_cloned = i + 1;
                 }
                 try surviving_rows.append(storage.Row{ .values = cloned_values });
             }
@@ -581,8 +643,17 @@ pub const VirtualMachine = struct {
             for (surviving_rows.items) |row| {
                 // Clone the row for insertion
                 var insert_values = try self.allocator.alloc(storage.Value, row.values.len);
+                var values_cloned: usize = 0;
+                errdefer {
+                    for (insert_values[0..values_cloned]) |value| {
+                        value.deinit(self.allocator);
+                    }
+                    self.allocator.free(insert_values);
+                }
+
                 for (row.values, 0..) |value, i| {
                     insert_values[i] = try self.cloneValue(value);
+                    values_cloned = i + 1;
                 }
                 try new_table.insert(storage.Row{ .values = insert_values });
             }
@@ -932,17 +1003,26 @@ pub const VirtualMachine = struct {
     fn combineRows(self: *Self, left_row: *const storage.Row, right_row: *const storage.Row) !storage.Row {
         const total_columns = left_row.values.len + right_row.values.len;
         var combined_values = try self.allocator.alloc(storage.Value, total_columns);
-        
+        var values_cloned: usize = 0;
+        errdefer {
+            for (combined_values[0..values_cloned]) |value| {
+                value.deinit(self.allocator);
+            }
+            self.allocator.free(combined_values);
+        }
+
         // Copy left row values
         for (left_row.values, 0..) |value, i| {
             combined_values[i] = try self.cloneValue(value);
+            values_cloned = i + 1;
         }
-        
+
         // Copy right row values
         for (right_row.values, 0..) |value, i| {
             combined_values[left_row.values.len + i] = try self.cloneValue(value);
+            values_cloned = left_row.values.len + i + 1;
         }
-        
+
         return storage.Row{ .values = combined_values };
     }
 

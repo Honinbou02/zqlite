@@ -18,8 +18,7 @@ pub const Connection = struct {
     const Self = @This();
 
     /// Open a database file
-    pub fn open(path: []const u8) !*Self {
-        var allocator = std.heap.page_allocator;
+    pub fn open(allocator: std.mem.Allocator, path: []const u8) !*Self {
 
         var conn = try allocator.create(Self);
         conn.allocator = allocator;
@@ -33,8 +32,7 @@ pub const Connection = struct {
     }
 
     /// Open an in-memory database
-    pub fn openMemory() !*Self {
-        var allocator = std.heap.page_allocator;
+    pub fn openMemory(allocator: std.mem.Allocator) !*Self {
 
         var conn = try allocator.create(Self);
         conn.allocator = allocator;
@@ -162,16 +160,24 @@ pub const Connection = struct {
         
         // Execute and get results
         var virtual_machine = vm.VirtualMachine.init(self.allocator, self);
-        const result = try virtual_machine.execute(&plan);
-        
-        // Convert to ResultSet
-        return ResultSet{
+        var result = try virtual_machine.execute(&plan);
+        defer result.deinit(self.allocator);
+
+        // Convert to ResultSet (copy the rows so result can be cleaned up)
+        var result_set = ResultSet{
             .allocator = self.allocator,
             .connection = self,
-            .rows = result.rows,
+            .rows = std.array_list.Managed(storage.Row).init(self.allocator),
             .current_index = 0,
             .column_names = try self.extractColumnNames(&parsed.statement),
         };
+
+        // Transfer ownership of rows to ResultSet
+        result_set.rows = result.rows;
+        // Prevent result.deinit from freeing the rows (we've transferred ownership)
+        result.rows = std.array_list.Managed(storage.Row).init(self.allocator);
+
+        return result_set;
     }
     
     /// Execute SQL and return single row (or null)
@@ -312,14 +318,53 @@ pub const ResultSet = struct {
         if (self.current_index >= self.rows.items.len) {
             return null;
         }
-        
+
         const storage_row = &self.rows.items[self.current_index];
         self.current_index += 1;
-        
+
+        // Create a copy of column_names for the Row to own
+        var owned_column_names = self.allocator.alloc([]const u8, self.column_names.len) catch return null;
+        for (self.column_names, 0..) |name, i| {
+            owned_column_names[i] = self.allocator.dupe(u8, name) catch {
+                // Clean up partially allocated names on error
+                for (owned_column_names[0..i]) |allocated_name| {
+                    self.allocator.free(allocated_name);
+                }
+                self.allocator.free(owned_column_names);
+                return null;
+            };
+        }
+
+        // Create a copy of values for the Row to own
+        var owned_values = self.allocator.alloc(storage.Value, storage_row.values.len) catch {
+            // Clean up column names on allocation failure
+            for (owned_column_names) |name| {
+                self.allocator.free(name);
+            }
+            self.allocator.free(owned_column_names);
+            return null;
+        };
+
+        for (storage_row.values, 0..) |value, i| {
+            owned_values[i] = value.clone(self.allocator) catch {
+                // Clean up partially cloned values on error
+                for (owned_values[0..i]) |cloned_value| {
+                    cloned_value.deinit(self.allocator);
+                }
+                self.allocator.free(owned_values);
+                // Clean up column names
+                for (owned_column_names) |name| {
+                    self.allocator.free(name);
+                }
+                self.allocator.free(owned_column_names);
+                return null;
+            };
+        }
+
         return Row{
             .allocator = self.allocator,
-            .values = storage_row.values,
-            .column_names = self.column_names,
+            .values = owned_values,
+            .column_names = owned_column_names,
         };
     }
     
@@ -472,6 +517,21 @@ pub const Row = struct {
     /// Get column count
     pub fn columnCount(self: *const Self) usize {
         return self.values.len;
+    }
+
+    /// Clean up owned resources
+    pub fn deinit(self: *Self) void {
+        // Clean up column names
+        for (self.column_names) |name| {
+            self.allocator.free(name);
+        }
+        self.allocator.free(self.column_names);
+
+        // Clean up values
+        for (self.values) |value| {
+            value.deinit(self.allocator);
+        }
+        self.allocator.free(self.values);
     }
 };
 

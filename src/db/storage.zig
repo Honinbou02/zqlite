@@ -349,6 +349,31 @@ pub const Value = union(enum) {
             else => {},
         }
     }
+
+    pub fn clone(self: Value, allocator: std.mem.Allocator) !Value {
+        return switch (self) {
+            .Integer => |i| Value{ .Integer = i },
+            .Real => |r| Value{ .Real = r },
+            .Null => Value.Null,
+            .Parameter => |p| Value{ .Parameter = p },
+            .Boolean => |b| Value{ .Boolean = b },
+            .Timestamp => |t| Value{ .Timestamp = t },
+            .Date => |d| Value{ .Date = d },
+            .Time => |t| Value{ .Time = t },
+            .Interval => |i| Value{ .Interval = i },
+            .SmallInt => |s| Value{ .SmallInt = s },
+            .BigInt => |b| Value{ .BigInt = b },
+            .UUID => |u| Value{ .UUID = u },
+            .Text => |text| Value{ .Text = try allocator.dupe(u8, text) },
+            .Blob => |blob| Value{ .Blob = try allocator.dupe(u8, blob) },
+            .JSON => |json| Value{ .JSON = try allocator.dupe(u8, json) },
+            // For complex types, create simplified versions for now
+            .JSONB => |jsonb| Value{ .JSON = try jsonb.stringifyJson(allocator) },
+            .Array => Value.Null, // TODO: Implement proper array cloning
+            .TimestampTZ => |tstz| Value{ .Timestamp = tstz.timestamp },
+            .Numeric => Value.Null, // TODO: Implement proper numeric cloning
+        };
+    }
 };
 
 /// JSONB value with parsed structure
