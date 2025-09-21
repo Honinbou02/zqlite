@@ -173,6 +173,13 @@ pub const VirtualMachine = struct {
                     return error.NoParametersProvided;
                 }
             },
+            .FunctionCall => |function_call| blk: {
+                // Evaluate function call and return the result
+                const ast_function_call = try self.convertStorageFunctionToAst(function_call);
+                defer ast_function_call.deinit(self.allocator);
+
+                break :blk try self.function_evaluator.evaluateFunction(ast_function_call);
+            },
             else => value, // Return the value as-is for non-parameters
         };
     }
@@ -192,14 +199,17 @@ pub const VirtualMachine = struct {
     
     /// Convert AST value to storage value
     fn convertAstValueToStorage(self: *Self, value: ast.Value) !storage.Value {
-        _ = self;
         return switch (value) {
             .Integer => |i| storage.Value{ .Integer = i },
-            .Text => |t| storage.Value{ .Text = t },
+            .Text => |t| storage.Value{ .Text = try self.allocator.dupe(u8, t) },
             .Real => |r| storage.Value{ .Real = r },
-            .Blob => |b| storage.Value{ .Blob = b },
+            .Blob => |b| storage.Value{ .Blob = try self.allocator.dupe(u8, b) },
             .Null => storage.Value.Null,
             .Parameter => |param_index| storage.Value{ .Parameter = param_index },
+            .FunctionCall => |function_call| {
+                const storage_func = try self.convertAstFunctionToStorage(function_call);
+                return storage.Value{ .FunctionCall = storage_func };
+            },
         };
     }
     
@@ -219,8 +229,41 @@ pub const VirtualMachine = struct {
         };
     }
     
+    /// Convert AST function call to storage function call
+    fn convertAstFunctionToStorage(self: *Self, function_call: ast.FunctionCall) !storage.Column.FunctionCall {
+        var storage_args = try self.allocator.alloc(storage.Column.FunctionArgument, function_call.arguments.len);
+        for (function_call.arguments, 0..) |arg, i| {
+            storage_args[i] = try self.convertAstFunctionArgToStorage(arg);
+        }
+
+        return storage.Column.FunctionCall{
+            .name = try self.allocator.dupe(u8, function_call.name),
+            .arguments = storage_args,
+        };
+    }
+
+    /// Convert AST function argument to storage function argument
+    fn convertAstFunctionArgToStorage(self: *Self, arg: ast.FunctionArgument) !storage.Column.FunctionArgument {
+        return switch (arg) {
+            .Literal => |literal| {
+                const storage_value = try self.convertAstValueToStorage(literal);
+                return storage.Column.FunctionArgument{ .Literal = storage_value };
+            },
+            .String => |string| {
+                const text_value = storage.Value{ .Text = try self.allocator.dupe(u8, string) };
+                return storage.Column.FunctionArgument{ .Literal = text_value };
+            },
+            .Column => |column| {
+                return storage.Column.FunctionArgument{ .Column = try self.allocator.dupe(u8, column) };
+            },
+            .Parameter => |param_index| {
+                return storage.Column.FunctionArgument{ .Parameter = param_index };
+            },
+        };
+    }
+
     /// Convert storage function call to AST function call
-    fn convertStorageFunctionToAst(self: *Self, function_call: storage.Column.FunctionCall) !ast.FunctionCall {
+    fn convertStorageFunctionToAst(self: *Self, function_call: storage.Column.FunctionCall) anyerror!ast.FunctionCall {
         var ast_args = try self.allocator.alloc(ast.FunctionArgument, function_call.arguments.len);
         for (function_call.arguments, 0..) |arg, i| {
             ast_args[i] = try self.convertStorageFunctionArgToAst(arg);
@@ -233,7 +276,7 @@ pub const VirtualMachine = struct {
     }
     
     /// Convert storage function argument to AST function argument
-    fn convertStorageFunctionArgToAst(self: *Self, arg: storage.Column.FunctionArgument) !ast.FunctionArgument {
+    fn convertStorageFunctionArgToAst(self: *Self, arg: storage.Column.FunctionArgument) anyerror!ast.FunctionArgument {
         return switch (arg) {
             .Literal => |literal| {
                 const ast_value = try self.convertStorageValueToAst(literal);
@@ -249,7 +292,7 @@ pub const VirtualMachine = struct {
     }
     
     /// Convert storage value to AST value
-    fn convertStorageValueToAst(self: *Self, value: storage.Value) !ast.Value {
+    fn convertStorageValueToAst(self: *Self, value: storage.Value) anyerror!ast.Value {
         return switch (value) {
             .Integer => |i| ast.Value{ .Integer = i },
             .Text => |t| ast.Value{ .Text = try self.allocator.dupe(u8, t) },
@@ -257,6 +300,10 @@ pub const VirtualMachine = struct {
             .Blob => |b| ast.Value{ .Blob = try self.allocator.dupe(u8, b) },
             .Null => ast.Value.Null,
             .Parameter => |param_index| ast.Value{ .Parameter = param_index },
+            .FunctionCall => |function_call| {
+                const ast_function_call = try self.convertStorageFunctionToAst(function_call);
+                return ast.Value{ .FunctionCall = ast_function_call };
+            },
             // PostgreSQL compatibility values
             .JSON => |j| ast.Value{ .Text = try self.allocator.dupe(u8, j) },
             .JSONB => |jsonb| ast.Value{ .Text = try jsonb.toString(self.allocator) },
@@ -289,7 +336,7 @@ pub const VirtualMachine = struct {
     }
     
     /// Clone a storage function call
-    fn cloneStorageFunctionCall(self: *Self, function_call: storage.Column.FunctionCall) !storage.Column.FunctionCall {
+    fn cloneStorageFunctionCall(self: *Self, function_call: storage.Column.FunctionCall) anyerror!storage.Column.FunctionCall {
         var cloned_args = try self.allocator.alloc(storage.Column.FunctionArgument, function_call.arguments.len);
         for (function_call.arguments, 0..) |arg, i| {
             cloned_args[i] = try self.cloneStorageFunctionArgument(arg);
@@ -302,7 +349,7 @@ pub const VirtualMachine = struct {
     }
     
     /// Clone a storage function argument
-    fn cloneStorageFunctionArgument(self: *Self, arg: storage.Column.FunctionArgument) !storage.Column.FunctionArgument {
+    fn cloneStorageFunctionArgument(self: *Self, arg: storage.Column.FunctionArgument) anyerror!storage.Column.FunctionArgument {
         return switch (arg) {
             .Literal => |literal| {
                 const cloned_literal = try self.cloneValue(literal);
@@ -325,6 +372,7 @@ pub const VirtualMachine = struct {
             .Blob => |b| storage.Value{ .Blob = try self.allocator.dupe(u8, b) },
             .Null => storage.Value.Null,
             .Parameter => |_| return error.UnresolvedParameter, // Parameters should be resolved before cloning
+            .FunctionCall => |func| storage.Value{ .FunctionCall = try self.cloneStorageFunctionCall(func) },
             // PostgreSQL compatibility values
             .JSON => |json| storage.Value{ .JSON = try self.allocator.dupe(u8, json) },
             .JSONB => |jsonb| storage.Value{ .JSONB = storage.JSONBValue.init(self.allocator, try jsonb.toString(self.allocator)) catch |err| blk: {
@@ -371,46 +419,74 @@ pub const VirtualMachine = struct {
         };
 
         for (insert.values) |row_values| {
-            // Build values incrementally to avoid uninitialized memory issues
-            var values_list = std.array_list.Managed(storage.Value).init(self.allocator);
-            defer {
-                for (values_list.items) |value| {
+            // Build final values array for all table columns
+            var final_values = try self.allocator.alloc(storage.Value, table.schema.columns.len);
+            var values_initialized: usize = 0;
+            errdefer {
+                for (final_values[0..values_initialized]) |value| {
                     value.deinit(self.allocator);
                 }
-                values_list.deinit();
+                self.allocator.free(final_values);
             }
 
-            // Fill in provided values
-            for (row_values, 0..) |value, i| {
-                if (i < table.schema.columns.len) {
+            // Initialize all values to null first
+            for (final_values) |*value| {
+                value.* = storage.Value.Null;
+            }
+
+            if (insert.columns) |specified_columns| {
+                // INSERT with specific columns: INSERT INTO table (col1, col2) VALUES (...)
+                if (specified_columns.len != row_values.len) {
+                    return error.ColumnValueMismatch;
+                }
+
+                // Map provided values to specified columns
+                for (specified_columns, 0..) |col_name, value_idx| {
+                    // Find the column index in the table schema
+                    var table_col_idx: ?usize = null;
+                    for (table.schema.columns, 0..) |table_col, table_idx| {
+                        if (std.mem.eql(u8, table_col.name, col_name)) {
+                            table_col_idx = table_idx;
+                            break;
+                        }
+                    }
+
+                    if (table_col_idx == null) {
+                        return error.ColumnNotFound;
+                    }
+
+                    const resolved_value = try self.cloneValue(try self.resolveValue(row_values[value_idx]));
+                    final_values[table_col_idx.?] = resolved_value;
+                    values_initialized = @max(values_initialized, table_col_idx.? + 1);
+                }
+            } else {
+                // INSERT without column specification: INSERT INTO table VALUES (...)
+                // Values are provided in table column order
+                for (row_values, 0..) |value, i| {
+                    if (i >= table.schema.columns.len) {
+                        return error.TooManyValues;
+                    }
                     const resolved_value = try self.cloneValue(try self.resolveValue(value));
-                    try values_list.append(resolved_value);
-                } else {
-                    break; // Too many values provided
+                    final_values[i] = resolved_value;
+                    values_initialized = i + 1;
                 }
             }
 
-            // Fill in default values for missing columns
-            for (row_values.len..table.schema.columns.len) |i| {
-                if (table.schema.columns[i].default_value) |default_value| {
-                    const default_val = try self.evaluateStorageDefaultValue(default_value);
-                    try values_list.append(default_val);
-                } else if (table.schema.columns[i].is_nullable) {
-                    try values_list.append(storage.Value.Null);
-                } else {
-                    // Non-nullable column without default value
-                    return error.MissingRequiredValue;
+            // Apply default values for columns that weren't specified
+            for (table.schema.columns, 0..) |column, i| {
+                if (final_values[i] == .Null) {
+                    if (column.default_value) |default_value| {
+                        // Replace NULL with evaluated default value
+                        const default_val = try self.evaluateStorageDefaultValue(default_value);
+                        final_values[i] = default_val;
+                        values_initialized = @max(values_initialized, i + 1);
+                    } else if (!column.is_nullable) {
+                        // Non-nullable column without default value
+                        return error.MissingRequiredValue;
+                    }
+                    // For nullable columns without defaults, keep as NULL
                 }
             }
-
-            // Create final array and transfer ownership
-            var final_values = try self.allocator.alloc(storage.Value, values_list.items.len);
-            for (values_list.items, 0..) |value, i| {
-                final_values[i] = value;
-            }
-
-            // Clear the list without deallocating values (ownership transferred)
-            values_list.clearRetainingCapacity();
 
             const row = storage.Row{ .values = final_values };
             try table.insert(row);
@@ -429,8 +505,12 @@ pub const VirtualMachine = struct {
         var cloned_columns = try self.allocator.alloc(storage.Column, create.columns.len);
         var columns_cloned: usize = 0;
         errdefer {
+            // Properly clean up cloned columns on error
             for (cloned_columns[0..columns_cloned]) |column| {
                 self.allocator.free(column.name);
+                if (column.default_value) |default_value| {
+                    default_value.deinit(self.allocator);
+                }
             }
             self.allocator.free(cloned_columns);
         }
@@ -752,6 +832,10 @@ pub const VirtualMachine = struct {
                             return error.NoParametersProvided;
                         }
                     },
+                    .FunctionCall => |function_call| {
+                        // Evaluate function call immediately
+                        return try self.function_evaluator.evaluateFunction(function_call);
+                    },
                 };
             },
             .Parameter => |param_index| {
@@ -796,6 +880,7 @@ pub const VirtualMachine = struct {
                 else => .lt,
             },
             .Parameter => .gt, // Parameters should have been resolved before comparison
+            .FunctionCall => .gt, // Function calls should have been resolved before comparison
             // PostgreSQL compatibility values
             .JSON => |l| switch (right) {
                 .JSON => |r| std.mem.order(u8, l, r),
@@ -1249,6 +1334,20 @@ pub const ExecutionResult = struct {
     }
 };
 
+/// VM errors
+const VmError = error{
+    ColumnValueMismatch,
+    ColumnNotFound,
+    TooManyValues,
+    MissingRequiredValue,
+    ParameterIndexOutOfBounds,
+    NoParametersProvided,
+    UnresolvedParameter,
+    TableNotFound,
+    UnexpectedAggregate,
+    NotImplemented,
+};
+
 /// Execute a parsed statement (convenience function)
 pub fn execute(connection: *db.Connection, parsed: *const ast.Statement) !void {
     var vm = VirtualMachine.init(connection.allocator, connection);
@@ -1278,6 +1377,7 @@ pub fn execute(connection: *db.Connection, parsed: *const ast.Statement) !void {
                             .Null => std.debug.print("NULL", .{}),
                             .Blob => std.debug.print("<blob>", .{}),
                             .Parameter => |param_index| std.debug.print("?{d}", .{param_index}),
+                            .FunctionCall => std.debug.print("<function>", .{}),
                             .JSON => |json| std.debug.print("JSON:'{s}'", .{json}),
                             .JSONB => |jsonb| std.debug.print("JSONB:'{s}'", .{jsonb.toString(connection.allocator) catch "invalid"}),
                             .UUID => |uuid| std.debug.print("UUID:{any}", .{uuid}),

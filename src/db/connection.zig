@@ -707,6 +707,35 @@ pub const PreparedStatement = struct {
         return count;
     }
 
+    /// Clone a storage function call
+    fn cloneStorageFunctionCall(allocator: std.mem.Allocator, function_call: storage.Column.FunctionCall) !storage.Column.FunctionCall {
+        var cloned_args = try allocator.alloc(storage.Column.FunctionArgument, function_call.arguments.len);
+        for (function_call.arguments, 0..) |arg, i| {
+            cloned_args[i] = try cloneStorageFunctionArgument(allocator, arg);
+        }
+
+        return storage.Column.FunctionCall{
+            .name = try allocator.dupe(u8, function_call.name),
+            .arguments = cloned_args,
+        };
+    }
+
+    /// Clone a storage function argument
+    fn cloneStorageFunctionArgument(allocator: std.mem.Allocator, arg: storage.Column.FunctionArgument) !storage.Column.FunctionArgument {
+        return switch (arg) {
+            .Literal => |literal| {
+                const cloned_literal = try cloneValue(allocator, literal);
+                return storage.Column.FunctionArgument{ .Literal = cloned_literal };
+            },
+            .Column => |column| {
+                return storage.Column.FunctionArgument{ .Column = try allocator.dupe(u8, column) };
+            },
+            .Parameter => |param_index| {
+                return storage.Column.FunctionArgument{ .Parameter = param_index };
+            },
+        };
+    }
+
     /// Clone a storage value
     fn cloneValue(allocator: std.mem.Allocator, value: storage.Value) !storage.Value {
         return switch (value) {
@@ -716,6 +745,7 @@ pub const PreparedStatement = struct {
             .Blob => |b| storage.Value{ .Blob = try allocator.dupe(u8, b) },
             .Null => storage.Value.Null,
             .Parameter => |param_index| storage.Value{ .Parameter = param_index },
+            .FunctionCall => |func| storage.Value{ .FunctionCall = try cloneStorageFunctionCall(allocator, func) },
             .JSON => |j| storage.Value{ .JSON = try allocator.dupe(u8, j) },
             .JSONB => |jsonb| storage.Value{ .JSONB = storage.JSONBValue.init(allocator, try jsonb.toString(allocator)) catch return storage.Value.Null },
             .UUID => |uuid| storage.Value{ .UUID = uuid },

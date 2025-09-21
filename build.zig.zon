@@ -1,6 +1,6 @@
 .{
     .name = .zqlite,
-    .version = "1.3.2",
+    .version = "1.3.3",
     .fingerprint = 0x9fb4d74ae26e27d0,
 
     .dependencies = .{

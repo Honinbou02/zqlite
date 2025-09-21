@@ -428,11 +428,13 @@ pub const Value = union(enum) {
     Blob: []const u8,
     Null,
     Parameter: u32, // Parameter placeholder index
+    FunctionCall: FunctionCall, // Support function calls in INSERT VALUES
 
     pub fn deinit(self: Value, allocator: std.mem.Allocator) void {
         switch (self) {
             .Text => |text| allocator.free(text),
             .Blob => |blob| allocator.free(blob),
+            .FunctionCall => |func| func.deinit(allocator),
             else => {},
         }
     }

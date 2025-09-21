@@ -514,6 +514,12 @@ pub const Planner = struct {
             .Blob => |b| storage.Value{ .Blob = try self.allocator.dupe(u8, b) },
             .Null => storage.Value.Null,
             .Parameter => |param_index| storage.Value{ .Parameter = param_index },
+            .FunctionCall => |function_call| {
+                // Convert function call to storage representation as FunctionCall placeholder
+                // This will be evaluated at runtime by the VM
+                const storage_func = try self.convertAstFunctionToStorage(function_call);
+                return storage.Value{ .FunctionCall = storage_func };
+            },
         };
     }
     
@@ -526,7 +532,7 @@ pub const Planner = struct {
     }
     
     /// Clone a function call
-    fn cloneFunctionCall(self: *Self, function_call: ast.FunctionCall) !ast.FunctionCall {
+    fn cloneFunctionCall(self: *Self, function_call: ast.FunctionCall) anyerror!ast.FunctionCall {
         var cloned_args = try self.allocator.alloc(ast.FunctionArgument, function_call.arguments.len);
         for (function_call.arguments, 0..) |arg, i| {
             cloned_args[i] = try self.cloneFunctionArgument(arg);
@@ -539,9 +545,10 @@ pub const Planner = struct {
     }
     
     /// Clone a function argument
-    fn cloneFunctionArgument(self: *Self, arg: ast.FunctionArgument) !ast.FunctionArgument {
+    fn cloneFunctionArgument(self: *Self, arg: ast.FunctionArgument) anyerror!ast.FunctionArgument {
         return switch (arg) {
             .Literal => |literal| ast.FunctionArgument{ .Literal = try self.cloneAstValue(literal) },
+            .String => |string| ast.FunctionArgument{ .String = try self.allocator.dupe(u8, string) },
             .Column => |column| ast.FunctionArgument{ .Column = try self.allocator.dupe(u8, column) },
             .Parameter => |param_index| ast.FunctionArgument{ .Parameter = param_index },
         };
@@ -575,7 +582,7 @@ pub const Planner = struct {
     }
     
     /// Convert AST function argument to storage function argument
-    fn convertAstFunctionArgToStorage(self: *Self, arg: ast.FunctionArgument) !storage.Column.FunctionArgument {
+    fn convertAstFunctionArgToStorage(self: *Self, arg: ast.FunctionArgument) anyerror!storage.Column.FunctionArgument {
         return switch (arg) {
             .Literal => |literal| {
                 const storage_value = try self.cloneValue(literal);
@@ -596,7 +603,7 @@ pub const Planner = struct {
     }
 
     /// Clone an AST value (different from storage value)
-    fn cloneAstValue(self: *Self, value: ast.Value) !ast.Value {
+    fn cloneAstValue(self: *Self, value: ast.Value) anyerror!ast.Value {
         return switch (value) {
             .Integer => |i| ast.Value{ .Integer = i },
             .Text => |t| ast.Value{ .Text = try self.allocator.dupe(u8, t) },
@@ -604,6 +611,7 @@ pub const Planner = struct {
             .Blob => |b| ast.Value{ .Blob = try self.allocator.dupe(u8, b) },
             .Null => ast.Value.Null,
             .Parameter => |param_index| ast.Value{ .Parameter = param_index },
+            .FunctionCall => |function_call| ast.Value{ .FunctionCall = try self.cloneFunctionCall(function_call) },
         };
     }
     

@@ -217,9 +217,12 @@ pub const TableSchema = struct {
     columns: []Column,
 
     pub fn deinit(self: *TableSchema, allocator: std.mem.Allocator) void {
-        // Clean up column names (now that allocator consistency is fixed)
+        // Clean up column names and default values
         for (self.columns) |column| {
             allocator.free(column.name);
+            if (column.default_value) |default_value| {
+                default_value.deinit(allocator);
+            }
         }
         allocator.free(self.columns);
     }
@@ -319,6 +322,7 @@ pub const Value = union(enum) {
     Blob: []const u8,
     Null,
     Parameter: u32, // Parameter placeholder index
+    FunctionCall: Column.FunctionCall, // Function call for evaluation (e.g., in INSERT VALUES)
     // PostgreSQL compatibility values
     JSON: []const u8, // JSON as text
     JSONB: JSONBValue, // Parsed JSON with binary optimization
@@ -338,6 +342,7 @@ pub const Value = union(enum) {
         switch (self) {
             .Text => |text| allocator.free(text),
             .Blob => |blob| allocator.free(blob),
+            .FunctionCall => |func| func.deinit(allocator),
             .JSON => |json| allocator.free(json),
             .JSONB => |jsonb| jsonb.deinit(allocator),
             .Array => |array| array.deinit(allocator),

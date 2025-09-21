@@ -193,6 +193,7 @@ pub const BTree = struct {
                         .Blob => |blob| storage.Value{ .Blob = try self.allocator.dupe(u8, blob) },
                         .Null => storage.Value.Null,
                         .Parameter => |param_index| storage.Value{ .Parameter = param_index },
+                        .FunctionCall => |func| storage.Value{ .FunctionCall = try self.cloneStorageFunctionCall(func) },
                         // PostgreSQL compatibility values
                         .JSON => |json| storage.Value{ .JSON = try self.allocator.dupe(u8, json) },
                         .JSONB => |jsonb| storage.Value{ .JSONB = storage.JSONBValue.init(self.allocator, try jsonb.toString(self.allocator)) catch |err| blk: {
@@ -444,6 +445,64 @@ pub const BTree = struct {
             }
         }
     }
+
+    /// Clone a storage function call
+    fn cloneStorageFunctionCall(self: *Self, function_call: storage.Column.FunctionCall) !storage.Column.FunctionCall {
+        var cloned_args = try self.allocator.alloc(storage.Column.FunctionArgument, function_call.arguments.len);
+        for (function_call.arguments, 0..) |arg, i| {
+            cloned_args[i] = try self.cloneStorageFunctionArgument(arg);
+        }
+
+        return storage.Column.FunctionCall{
+            .name = try self.allocator.dupe(u8, function_call.name),
+            .arguments = cloned_args,
+        };
+    }
+
+    /// Clone a storage function argument
+    fn cloneStorageFunctionArgument(self: *Self, arg: storage.Column.FunctionArgument) !storage.Column.FunctionArgument {
+        return switch (arg) {
+            .Literal => |literal| {
+                const cloned_literal = try self.cloneValueSimple(literal);
+                return storage.Column.FunctionArgument{ .Literal = cloned_literal };
+            },
+            .Column => |column| {
+                return storage.Column.FunctionArgument{ .Column = try self.allocator.dupe(u8, column) };
+            },
+            .Parameter => |param_index| {
+                return storage.Column.FunctionArgument{ .Parameter = param_index };
+            },
+        };
+    }
+
+    /// Clone a storage value (simple version to avoid infinite recursion)
+    fn cloneValueSimple(self: *Self, value: storage.Value) !storage.Value {
+        return switch (value) {
+            .Integer => |i| storage.Value{ .Integer = i },
+            .Real => |r| storage.Value{ .Real = r },
+            .Text => |t| storage.Value{ .Text = try self.allocator.dupe(u8, t) },
+            .Blob => |b| storage.Value{ .Blob = try self.allocator.dupe(u8, b) },
+            .Null => storage.Value.Null,
+            .Parameter => |param_index| storage.Value{ .Parameter = param_index },
+            .FunctionCall => |_| storage.Value.Null, // Simplified - function calls shouldn't be in stored values
+            .JSON => |json| storage.Value{ .JSON = try self.allocator.dupe(u8, json) },
+            .JSONB => |jsonb| storage.Value{ .JSONB = storage.JSONBValue.init(self.allocator, try jsonb.toString(self.allocator)) catch return storage.Value.Null },
+            .UUID => |uuid| storage.Value{ .UUID = uuid },
+            .Array => |array| storage.Value{ .Array = storage.ArrayValue{
+                .element_type = array.element_type,
+                .elements = try self.allocator.dupe(storage.Value, array.elements),
+            } },
+            .Boolean => |b| storage.Value{ .Boolean = b },
+            .Timestamp => |ts| storage.Value{ .Timestamp = ts },
+            .TimestampTZ => |tstz| storage.Value{ .TimestampTZ = tstz },
+            .Date => |d| storage.Value{ .Date = d },
+            .Time => |t| storage.Value{ .Time = t },
+            .Interval => |i| storage.Value{ .Interval = i },
+            .Numeric => |n| storage.Value{ .Numeric = n },
+            .SmallInt => |si| storage.Value{ .SmallInt = si },
+            .BigInt => |bi| storage.Value{ .BigInt = bi },
+        };
+    }
 };
 
 /// B-tree node
@@ -627,6 +686,11 @@ pub const Node = struct {
                     pos += 1;
                     std.mem.writeInt(u32, buffer[pos..][0..4], param_index, .little);
                     pos += 4;
+                },
+                .FunctionCall => |_| {
+                    // Function calls should be evaluated before storage - this is a fallback
+                    buffer[pos] = 0; // Store as NULL
+                    pos += 1;
                 },
                 // PostgreSQL compatibility values - simplified serialization
                 .JSON => |j| {
