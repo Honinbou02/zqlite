@@ -40,9 +40,9 @@ export fn zqlite_open(path: [*:0]const u8) ?*zqlite_connection_t {
     const path_slice = std.mem.span(path);
 
     const conn = if (std.mem.eql(u8, path_slice, ":memory:"))
-        zqlite.openMemory() catch return null
+        zqlite.openMemory(c_allocator) catch return null
     else
-        zqlite.open(path_slice) catch return null;
+        zqlite.open(c_allocator, path_slice) catch return null;
 
     return @as(*zqlite_connection_t, @ptrCast(conn));
 }

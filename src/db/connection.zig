@@ -708,7 +708,7 @@ pub const PreparedStatement = struct {
     }
 
     /// Clone a storage function call
-    fn cloneStorageFunctionCall(allocator: std.mem.Allocator, function_call: storage.Column.FunctionCall) !storage.Column.FunctionCall {
+    fn cloneStorageFunctionCall(allocator: std.mem.Allocator, function_call: storage.Column.FunctionCall) std.mem.Allocator.Error!storage.Column.FunctionCall {
         var cloned_args = try allocator.alloc(storage.Column.FunctionArgument, function_call.arguments.len);
         for (function_call.arguments, 0..) |arg, i| {
             cloned_args[i] = try cloneStorageFunctionArgument(allocator, arg);
@@ -721,7 +721,7 @@ pub const PreparedStatement = struct {
     }
 
     /// Clone a storage function argument
-    fn cloneStorageFunctionArgument(allocator: std.mem.Allocator, arg: storage.Column.FunctionArgument) !storage.Column.FunctionArgument {
+    fn cloneStorageFunctionArgument(allocator: std.mem.Allocator, arg: storage.Column.FunctionArgument) std.mem.Allocator.Error!storage.Column.FunctionArgument {
         return switch (arg) {
             .Literal => |literal| {
                 const cloned_literal = try cloneValue(allocator, literal);
@@ -737,7 +737,7 @@ pub const PreparedStatement = struct {
     }
 
     /// Clone a storage value
-    fn cloneValue(allocator: std.mem.Allocator, value: storage.Value) !storage.Value {
+    fn cloneValue(allocator: std.mem.Allocator, value: storage.Value) std.mem.Allocator.Error!storage.Value {
         return switch (value) {
             .Integer => |i| storage.Value{ .Integer = i },
             .Real => |r| storage.Value{ .Real = r },

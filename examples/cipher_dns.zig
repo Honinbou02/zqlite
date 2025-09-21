@@ -14,9 +14,9 @@ const CipherDNS = struct {
     pub fn init(allocator: std.mem.Allocator, db_path: []const u8, cache_enabled: bool) !Self {
         // Open or create the database
         const db = if (std.mem.eql(u8, db_path, ":memory:"))
-            try zqlite.openMemory()
+            try zqlite.openMemory(allocator)
         else
-            try zqlite.open(db_path);
+            try zqlite.open(allocator, db_path);
 
         var server = Self{
             .allocator = allocator,

@@ -169,7 +169,7 @@ fn demonstrateAdvancedFeatures(_: *zqlite.Connection) !void {
     std.debug.print("   🔐 Post-quantum crypto: ML-KEM-768, ML-DSA-65 ready\n", .{});
 
     // Performance metrics
-    const version = zqlite.version;
+    const version = zqlite.version.VERSION_STRING;
     std.debug.print("   📈 ZQLite version: {s}\n", .{version});
     std.debug.print("   🎯 Target performance: 50,000+ concurrent peers\n", .{});
     std.debug.print("   ⚡ Target latency: <1ms p99 for peer queries\n", .{});

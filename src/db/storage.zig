@@ -369,6 +369,7 @@ pub const Value = union(enum) {
             .Text => |text| Value{ .Text = try allocator.dupe(u8, text) },
             .Blob => |blob| Value{ .Blob = try allocator.dupe(u8, blob) },
             .JSON => |json| Value{ .JSON = try allocator.dupe(u8, json) },
+            .FunctionCall => |func| Value{ .FunctionCall = func }, // TODO: Implement proper function call cloning
             // For complex types, create simplified versions for now
             .JSONB => |jsonb| Value{ .JSON = try jsonb.stringifyJson(allocator) },
             .Array => Value.Null, // TODO: Implement proper array cloning
