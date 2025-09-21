@@ -43,7 +43,7 @@ pub fn main() !void {
         try stmt.bindParameter(3, zqlite.storage.Value{ .Real = product.price });
         
         var result = try stmt.execute(conn);
-        defer result.deinit(allocator);
+        defer result.deinit();
     }
     
     std.debug.print("✅ Inserted {} product records\n\n", .{test_products.len});

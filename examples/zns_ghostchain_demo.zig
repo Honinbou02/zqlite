@@ -310,5 +310,6 @@ pub fn main() !void {
     try zns.transferDomain("alice.ghost", bob_pubkey, signature);
 
     std.debug.print("\n✅ ZNS Demo completed successfully!\n", .{});
-    std.debug.print("ZQLite v1.0.0 + ZCrypto providing secure DNS for GhostChain\n", .{});
+    const version = @import("../src/version.zig");
+    std.debug.print("{s} + ZCrypto providing secure DNS for GhostChain\n", .{version.FULL_VERSION_STRING});
 }

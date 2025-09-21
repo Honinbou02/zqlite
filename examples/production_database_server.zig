@@ -1,7 +1,7 @@
 const std = @import("std");
 const zqlite = @import("../src/zqlite.zig");
 
-/// 🏦 ZQLite Production Database Server v1.0.0
+/// 🏦 ZQLite Production Database Server
 /// High-performance, secure database server for production workloads
 /// Features: Connection pooling, replication, backup, monitoring
 const ServerError = error{
@@ -77,7 +77,8 @@ pub const ZQLiteServer = struct {
 
     /// Initialize production database server
     pub fn init(allocator: std.mem.Allocator, config: DatabaseConfig) !Self {
-        std.debug.print("🚀 Initializing ZQLite Production Server v1.0.0\n", .{});
+        const version = @import("../src/version.zig");
+        std.debug.print("🚀 Initializing {s} - Production Server\n", .{version.FULL_VERSION_STRING});
         std.debug.print("Database: {s}\n", .{config.name});
         std.debug.print("File: {s}\n", .{config.file_path});
 
@@ -374,5 +375,6 @@ pub fn main() !void {
     try server.disconnectClient(client3);
 
     std.debug.print("\n✅ Production Database Server Demo completed!\n", .{});
-    std.debug.print("ZQLite v1.0.0 ready for enterprise production workloads\n", .{});
+    const version = @import("../src/version.zig");
+    std.debug.print("{s} ready for enterprise production workloads\n", .{version.FULL_VERSION_STRING});
 }

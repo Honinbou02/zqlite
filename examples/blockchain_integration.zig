@@ -1,7 +1,7 @@
 const std = @import("std");
 const zqlite = @import("../src/zqlite.zig");
 
-/// ⛓️ ZQLite Blockchain Integration v1.0.0
+/// ⛓️ ZQLite Blockchain Integration
 /// High-performance blockchain data storage and indexing
 /// Features: Block validation, transaction indexing, state verification
 const BlockchainError = error{
@@ -185,7 +185,8 @@ pub const BlockchainDB = struct {
 
     /// Initialize blockchain database
     pub fn init(allocator: std.mem.Allocator) !Self {
-        std.debug.print("⛓️ Initializing ZQLite Blockchain Database v1.0.0\n", .{});
+        const version = @import("../src/version.zig");
+        std.debug.print("⛓️ Initializing {s} - Blockchain Database\n", .{version.FULL_VERSION_STRING});
 
         const crypto_engine = try allocator.create(zqlite.crypto.CryptoEngine);
         crypto_engine.* = try zqlite.crypto.CryptoEngine.initWithMasterKey(allocator, "blockchain_master_key_2024");
@@ -544,5 +545,6 @@ pub fn main() !void {
     }
 
     std.debug.print("\n✅ Blockchain Integration Demo completed!\n", .{});
-    std.debug.print("ZQLite v1.0.0 provides secure, high-performance blockchain data storage\n", .{});
+    const version = @import("../src/version.zig");
+    std.debug.print("{s} provides secure, high-performance blockchain data storage\n", .{version.FULL_VERSION_STRING});
 }

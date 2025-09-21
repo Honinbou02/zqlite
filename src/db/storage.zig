@@ -259,6 +259,20 @@ pub const Column = struct {
             }
             allocator.free(self.arguments);
         }
+
+        pub fn clone(self: FunctionCall, allocator: std.mem.Allocator) CloneValueError!FunctionCall {
+            const cloned_name = try allocator.dupe(u8, self.name);
+            var cloned_args = try allocator.alloc(FunctionArgument, self.arguments.len);
+
+            for (self.arguments, 0..) |arg, i| {
+                cloned_args[i] = try arg.clone(allocator);
+            }
+
+            return FunctionCall{
+                .name = cloned_name,
+                .arguments = cloned_args,
+            };
+        }
     };
     
     pub const FunctionArgument = union(enum) {
@@ -272,6 +286,14 @@ pub const Column = struct {
                 .Column => |col| allocator.free(col),
                 .Parameter => {},
             }
+        }
+
+        pub fn clone(self: FunctionArgument, allocator: std.mem.Allocator) CloneValueError!FunctionArgument {
+            return switch (self) {
+                .Literal => |value| FunctionArgument{ .Literal = try value.clone(allocator) },
+                .Column => |col| FunctionArgument{ .Column = try allocator.dupe(u8, col) },
+                .Parameter => |param| FunctionArgument{ .Parameter = param },
+            };
         }
     };
 };
@@ -352,7 +374,7 @@ pub const Value = union(enum) {
         }
     }
 
-    pub fn clone(self: Value, allocator: std.mem.Allocator) !Value {
+    pub fn clone(self: Value, allocator: std.mem.Allocator) CloneValueError!Value {
         return switch (self) {
             .Integer => |i| Value{ .Integer = i },
             .Real => |r| Value{ .Real = r },
@@ -369,12 +391,24 @@ pub const Value = union(enum) {
             .Text => |text| Value{ .Text = try allocator.dupe(u8, text) },
             .Blob => |blob| Value{ .Blob = try allocator.dupe(u8, blob) },
             .JSON => |json| Value{ .JSON = try allocator.dupe(u8, json) },
-            .FunctionCall => |func| Value{ .FunctionCall = func }, // TODO: Implement proper function call cloning
-            // For complex types, create simplified versions for now
-            .JSONB => |jsonb| Value{ .JSON = try jsonb.stringifyJson(allocator) },
-            .Array => Value.Null, // TODO: Implement proper array cloning
-            .TimestampTZ => |tstz| Value{ .Timestamp = tstz.timestamp },
-            .Numeric => Value.Null, // TODO: Implement proper numeric cloning
+            .FunctionCall => |func| Value{ .FunctionCall = try func.clone(allocator) },
+            // For complex types, create proper deep copies
+            .JSONB => |jsonb| blk: {
+                const json_str = try jsonb.toString(allocator);
+                defer allocator.free(json_str);
+                break :blk Value{ .JSONB = try JSONBValue.init(allocator, json_str) };
+            },
+            .Array => |array| Value{ .Array = try array.clone(allocator) },
+            .TimestampTZ => |tstz| Value{ .TimestampTZ = TimestampTZValue{
+                .timestamp = tstz.timestamp,
+                .timezone = try allocator.dupe(u8, tstz.timezone),
+            } },
+            .Numeric => |numeric| Value{ .Numeric = NumericValue{
+                .precision = numeric.precision,
+                .scale = numeric.scale,
+                .digits = try allocator.dupe(u8, numeric.digits),
+                .is_negative = numeric.is_negative,
+            } }
         };
     }
 };
@@ -563,6 +597,11 @@ pub const ArrayValue = struct {
             if (other.contains(element)) return true;
         }
         return false;
+    }
+
+    /// Clone the array
+    pub fn clone(self: ArrayValue, allocator: std.mem.Allocator) CloneValueError!ArrayValue {
+        return try ArrayValue.init(allocator, self.element_type, self.elements);
     }
 };
 

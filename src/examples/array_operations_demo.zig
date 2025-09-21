@@ -199,7 +199,7 @@ pub fn main() !void {
     defer allocator.free(param_categories);
     
     var result = try stmt.execute(conn);
-    defer result.deinit(allocator);
+    defer result.deinit();
     
     std.debug.print("✅ Inserted product with array columns\n", .{});
 

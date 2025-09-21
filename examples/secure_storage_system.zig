@@ -1,7 +1,7 @@
 const std = @import("std");
 const zqlite = @import("../src/zqlite.zig");
 
-/// 🔒 ZQLite Secure Storage System v1.0.0
+/// 🔒 ZQLite Secure Storage System
 /// Enterprise-grade secure file storage with encryption, versioning, and access control
 /// Features: AES-256 encryption, secure metadata, audit logging, access permissions
 const StorageError = error{
@@ -168,7 +168,8 @@ pub const SecureStorageSystem = struct {
 
     /// Initialize secure storage system
     pub fn init(allocator: std.mem.Allocator, storage_path: []const u8) !Self {
-        std.debug.print("🔒 Initializing ZQLite Secure Storage System v1.0.0\n", .{});
+        const version = @import("../src/version.zig");
+        std.debug.print("🔒 Initializing {s} - Secure Storage System\n", .{version.FULL_VERSION_STRING});
         std.debug.print("Storage Path: {s}\n", .{storage_path});
 
         const crypto_engine = try allocator.create(zqlite.crypto.CryptoEngine);
@@ -542,5 +543,6 @@ pub fn main() !void {
     stats.print();
 
     std.debug.print("\n✅ Secure Storage System Demo completed!\n", .{});
-    std.debug.print("ZQLite v1.0.0 provides enterprise-grade secure file storage\n", .{});
+    const version = @import("../src/version.zig");
+    std.debug.print("{s} provides enterprise-grade secure file storage\n", .{version.FULL_VERSION_STRING});
 }

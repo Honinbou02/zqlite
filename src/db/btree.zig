@@ -605,18 +605,22 @@ pub const Node = struct {
     pub fn serialize(self: *const Self, buffer: []u8, allocator: std.mem.Allocator) !usize {
         var pos: usize = 0;
 
+        // Ensure we have minimum buffer space for header
+        if (buffer.len < 9) return error.BufferTooSmall;
+
         // Write header
         buffer[pos] = if (self.is_leaf) 1 else 0;
         pos += 1;
-        
+
         std.mem.writeInt(u32, buffer[pos..][0..4], self.key_count, .little);
         pos += 4;
-        
+
         std.mem.writeInt(u32, buffer[pos..][0..4], self.order, .little);
         pos += 4;
 
         // Write keys
         for (self.keys[0..self.key_count]) |key| {
+            if (pos + 8 > buffer.len) return error.BufferTooSmall;
             std.mem.writeInt(u64, buffer[pos..][0..8], key, .little);
             pos += 8;
         }
@@ -624,11 +628,14 @@ pub const Node = struct {
         if (self.is_leaf) {
             // Write values for leaf nodes
             for (self.values[0..self.key_count]) |value| {
-                pos += try self.serializeValue(buffer[pos..], &value, allocator);
+                if (pos >= buffer.len) return error.BufferTooSmall;
+                const bytes_written = try self.serializeValue(buffer[pos..], &value, allocator);
+                pos += bytes_written;
             }
         } else {
             // Write child pointers for internal nodes
             for (self.children[0 .. self.key_count + 1]) |child| {
+                if (pos + 4 > buffer.len) return error.BufferTooSmall;
                 std.mem.writeInt(u32, buffer[pos..][0..4], child, .little);
                 pos += 4;
             }
@@ -641,7 +648,10 @@ pub const Node = struct {
     fn serializeValue(self: *const Self, buffer: []u8, value: *const storage.Row, allocator: std.mem.Allocator) !usize {
         _ = self;
         var pos: usize = 0;
-        
+
+        // Ensure we have space for the row value count
+        if (buffer.len < 4) return error.BufferTooSmall;
+
         // Write number of values in row
         std.mem.writeInt(u32, buffer[pos..][0..4], @intCast(value.values.len), .little);
         pos += 4;
@@ -650,18 +660,21 @@ pub const Node = struct {
         for (value.values) |val| {
             switch (val) {
                 .Integer => |i| {
+                    if (pos + 9 > buffer.len) return error.BufferTooSmall; // 1 byte tag + 8 bytes data
                     buffer[pos] = 1; // Type tag
                     pos += 1;
                     std.mem.writeInt(i64, buffer[pos..][0..8], i, .little);
                     pos += 8;
                 },
                 .Real => |r| {
+                    if (pos + 9 > buffer.len) return error.BufferTooSmall; // 1 byte tag + 8 bytes data
                     buffer[pos] = 2; // Type tag
                     pos += 1;
                     std.mem.writeInt(u64, buffer[pos..][0..8], @bitCast(r), .little);
                     pos += 8;
                 },
                 .Text => |t| {
+                    if (pos + 5 + t.len > buffer.len) return error.BufferTooSmall; // 1 byte tag + 4 bytes length + text
                     buffer[pos] = 3; // Type tag
                     pos += 1;
                     std.mem.writeInt(u32, buffer[pos..][0..4], @intCast(t.len), .little);
@@ -670,6 +683,7 @@ pub const Node = struct {
                     pos += t.len;
                 },
                 .Blob => |b| {
+                    if (pos + 5 + b.len > buffer.len) return error.BufferTooSmall; // 1 byte tag + 4 bytes length + blob
                     buffer[pos] = 4; // Type tag
                     pos += 1;
                     std.mem.writeInt(u32, buffer[pos..][0..4], @intCast(b.len), .little);
@@ -678,10 +692,12 @@ pub const Node = struct {
                     pos += b.len;
                 },
                 .Null => {
+                    if (pos + 1 > buffer.len) return error.BufferTooSmall;
                     buffer[pos] = 0; // Type tag
                     pos += 1;
                 },
                 .Parameter => |param_index| {
+                    if (pos + 5 > buffer.len) return error.BufferTooSmall; // 1 byte tag + 4 bytes data
                     buffer[pos] = 5; // Type tag
                     pos += 1;
                     std.mem.writeInt(u32, buffer[pos..][0..4], param_index, .little);
@@ -689,6 +705,7 @@ pub const Node = struct {
                 },
                 .FunctionCall => |_| {
                     // Function calls should be evaluated before storage - this is a fallback
+                    if (pos + 1 > buffer.len) return error.BufferTooSmall;
                     buffer[pos] = 0; // Store as NULL
                     pos += 1;
                 },
@@ -728,18 +745,21 @@ pub const Node = struct {
                     pos += array_str.len;
                 },
                 .Boolean => |b| {
+                    if (pos + 2 > buffer.len) return error.BufferTooSmall; // 1 byte tag + 1 byte data
                     buffer[pos] = 10; // Type tag
                     pos += 1;
                     buffer[pos] = if (b) 1 else 0;
                     pos += 1;
                 },
                 .Timestamp => |ts| {
+                    if (pos + 9 > buffer.len) return error.BufferTooSmall; // 1 byte tag + 8 bytes data
                     buffer[pos] = 11; // Type tag
                     pos += 1;
                     std.mem.writeInt(i64, buffer[pos..][0..8], ts, .little);
                     pos += 8;
                 },
                 .TimestampTZ => |tstz| {
+                    if (pos + 13 + tstz.timezone.len > buffer.len) return error.BufferTooSmall; // 1 byte tag + 8 bytes timestamp + 4 bytes len + timezone
                     buffer[pos] = 12; // Type tag
                     pos += 1;
                     std.mem.writeInt(i64, buffer[pos..][0..8], tstz.timestamp, .little);
@@ -750,24 +770,28 @@ pub const Node = struct {
                     pos += tstz.timezone.len;
                 },
                 .Date => |d| {
+                    if (pos + 5 > buffer.len) return error.BufferTooSmall; // 1 byte tag + 4 bytes data
                     buffer[pos] = 13; // Type tag
                     pos += 1;
                     std.mem.writeInt(i32, buffer[pos..][0..4], d, .little);
                     pos += 4;
                 },
                 .Time => |t| {
+                    if (pos + 9 > buffer.len) return error.BufferTooSmall; // 1 byte tag + 8 bytes data
                     buffer[pos] = 14; // Type tag
                     pos += 1;
                     std.mem.writeInt(i64, buffer[pos..][0..8], t, .little);
                     pos += 8;
                 },
                 .Interval => |i| {
+                    if (pos + 9 > buffer.len) return error.BufferTooSmall; // 1 byte tag + 8 bytes data
                     buffer[pos] = 15; // Type tag
                     pos += 1;
                     std.mem.writeInt(i64, buffer[pos..][0..8], i, .little);
                     pos += 8;
                 },
                 .Numeric => |n| {
+                    if (pos + 10 + n.digits.len > buffer.len) return error.BufferTooSmall; // 1 byte tag + 2+2+1+4 bytes + digits
                     buffer[pos] = 16; // Type tag
                     pos += 1;
                     std.mem.writeInt(u16, buffer[pos..][0..2], n.precision, .little);
@@ -782,12 +806,14 @@ pub const Node = struct {
                     pos += n.digits.len;
                 },
                 .SmallInt => |si| {
+                    if (pos + 3 > buffer.len) return error.BufferTooSmall; // 1 byte tag + 2 bytes data
                     buffer[pos] = 17; // Type tag
                     pos += 1;
                     std.mem.writeInt(i16, buffer[pos..][0..2], si, .little);
                     pos += 2;
                 },
                 .BigInt => |bi| {
+                    if (pos + 9 > buffer.len) return error.BufferTooSmall; // 1 byte tag + 8 bytes data
                     buffer[pos] = 18; // Type tag
                     pos += 1;
                     std.mem.writeInt(i64, buffer[pos..][0..8], bi, .little);

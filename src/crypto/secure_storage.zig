@@ -2,7 +2,7 @@ const std = @import("std");
 const crypto_interface = @import("interface.zig");
 const storage = @import("../db/storage.zig");
 
-/// 🚀 ZQLite v1.0.0 Crypto Engine - Production-ready database encryption
+/// 🚀 ZQLite Crypto Engine - Production-ready database encryption
 /// Features: ZCrypto integration, Modular crypto backends, Native Zig crypto fallback
 pub const CryptoEngine = struct {
     allocator: std.mem.Allocator,

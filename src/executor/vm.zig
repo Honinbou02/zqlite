@@ -7,7 +7,6 @@ const functions = @import("functions.zig");
 
 /// Virtual machine for executing query plans
 pub const VirtualMachine = struct {
-    allocator: std.mem.Allocator,
     connection: *db.Connection,
     parameters: ?[]storage.Value, // Optional parameters for prepared statements
     function_evaluator: functions.FunctionEvaluator,
@@ -16,25 +15,29 @@ pub const VirtualMachine = struct {
 
     /// Initialize virtual machine
     pub fn init(allocator: std.mem.Allocator, connection: *db.Connection) Self {
+        // Always use the connection's allocator to ensure consistency
+        _ = allocator; // Ignore passed allocator, use connection's allocator
+        // VM initialization complete
         return Self{
-            .allocator = allocator,
             .connection = connection,
             .parameters = null,
-            .function_evaluator = functions.FunctionEvaluator.init(allocator),
+            .function_evaluator = functions.FunctionEvaluator.init(connection.allocator),
         };
     }
 
     /// Execute a query plan
     pub fn execute(self: *Self, plan: *planner.ExecutionPlan) !ExecutionResult {
         var result = ExecutionResult{
-            .rows = std.array_list.Managed(storage.Row).init(self.allocator),
+            .rows = std.array_list.Managed(storage.Row).init(self.connection.allocator),
             .affected_rows = 0,
+            .connection = self.connection,
         };
 
         for (plan.steps) |*step| {
             try self.executeStep(step, &result);
         }
 
+        // Execution completed
         return result;
     }
 
@@ -72,44 +75,36 @@ pub const VirtualMachine = struct {
 
     /// Execute table scan
     fn executeTableScan(self: *Self, scan: *planner.TableScanStep, result: *ExecutionResult) !void {
+        // Executing table scan
         const table = self.connection.storage_engine.getTable(scan.table_name) orelse {
             return error.TableNotFound;
         };
 
-        const rows = try table.select(self.allocator);
+        const rows = try table.select(self.connection.allocator);
         defer {
-            // Clean up the rows returned by select (they're already cloned by the B-tree)
-            for (rows) |row| {
-                for (row.values) |value| {
-                    value.deinit(self.allocator);
-                }
-                self.allocator.free(row.values);
-            }
-            self.allocator.free(rows);
+            // Only free the rows array itself - the individual rows are now owned by result
+            self.connection.allocator.free(rows);
         }
 
         for (rows) |row| {
-            // Clone the row again for the result (since we're freeing the original)
-            var cloned_values = try self.allocator.alloc(storage.Value, row.values.len);
-            var values_cloned: usize = 0;
-            errdefer {
-                for (cloned_values[0..values_cloned]) |value| {
-                    value.deinit(self.allocator);
+            // The row is already properly cloned by btree.selectAll - use it directly
+            // Using pre-cloned row from btree
+            for (row.values) |value| {
+                switch (value) {
+                    .Text => {
+                        // Using pre-cloned text value
+                    },
+                    else => {},
                 }
-                self.allocator.free(cloned_values);
             }
-
-            for (row.values, 0..) |value, i| {
-                cloned_values[i] = try self.cloneValue(value);
-                values_cloned = i + 1;
-            }
-            try result.rows.append(storage.Row{ .values = cloned_values });
+            try result.rows.append(row);
+            // Row appended to result
         }
     }
 
     /// Execute filter (WHERE clause)
     fn executeFilter(self: *Self, filter: *planner.FilterStep, result: *ExecutionResult) !void {
-        var filtered_rows = std.array_list.Managed(storage.Row).init(self.allocator);
+        var filtered_rows = std.array_list.Managed(storage.Row).init(self.connection.allocator);
 
         for (result.rows.items) |row| {
             if (try self.evaluateCondition(&filter.condition, &row)) {
@@ -129,18 +124,18 @@ pub const VirtualMachine = struct {
         }
 
         // Create projected rows with only selected columns
-        var projected_rows = std.array_list.Managed(storage.Row).init(self.allocator);
+        var projected_rows = std.array_list.Managed(storage.Row).init(self.connection.allocator);
 
         for (result.rows.items) |original_row| {
-            var projected_values = std.array_list.Managed(storage.Value).init(self.allocator);
+            var projected_values = std.array_list.Managed(storage.Value).init(self.connection.allocator);
 
             // For now, we'll assume column order matches project.columns order
             // In a real implementation, we'd need column metadata from the table schema
             for (project.columns, 0..) |col_name, i| {
                 if (i < original_row.values.len) {
-                    // Clone the value for the projected row
-                    const cloned_value = try self.cloneValue(original_row.values[i]);
-                    try projected_values.append(cloned_value);
+                    // Transfer ownership of the value instead of cloning
+                    // Transferring value ownership
+                    try projected_values.append(original_row.values[i]);
                 } else {
                     // Column doesn't exist, add NULL
                     try projected_values.append(storage.Value.Null);
@@ -153,7 +148,12 @@ pub const VirtualMachine = struct {
             });
         }
 
-        // Replace original rows with projected ones
+        // Clean up original rows carefully - we transferred value ownership, so only free the arrays
+        for (result.rows.items) |row| {
+            // Don't call value.deinit() since we transferred ownership to projected rows
+            // Cleaning up original row array
+            self.connection.allocator.free(row.values);
+        }
         result.rows.deinit();
         result.rows = projected_rows;
     }
@@ -176,7 +176,7 @@ pub const VirtualMachine = struct {
             .FunctionCall => |function_call| blk: {
                 // Evaluate function call and return the result
                 const ast_function_call = try self.convertStorageFunctionToAst(function_call);
-                defer ast_function_call.deinit(self.allocator);
+                defer ast_function_call.deinit(self.connection.allocator);
 
                 break :blk try self.function_evaluator.evaluateFunction(ast_function_call);
             },
@@ -201,9 +201,9 @@ pub const VirtualMachine = struct {
     fn convertAstValueToStorage(self: *Self, value: ast.Value) !storage.Value {
         return switch (value) {
             .Integer => |i| storage.Value{ .Integer = i },
-            .Text => |t| storage.Value{ .Text = try self.allocator.dupe(u8, t) },
+            .Text => |t| storage.Value{ .Text = try self.connection.allocator.dupe(u8, t) },
             .Real => |r| storage.Value{ .Real = r },
-            .Blob => |b| storage.Value{ .Blob = try self.allocator.dupe(u8, b) },
+            .Blob => |b| storage.Value{ .Blob = try self.connection.allocator.dupe(u8, b) },
             .Null => storage.Value.Null,
             .Parameter => |param_index| storage.Value{ .Parameter = param_index },
             .FunctionCall => |function_call| {
@@ -217,13 +217,15 @@ pub const VirtualMachine = struct {
     fn evaluateStorageDefaultValue(self: *Self, default_value: storage.Column.DefaultValue) !storage.Value {
         return switch (default_value) {
             .Literal => |literal| {
-                return self.resolveValue(literal);
+                // Always clone literal DEFAULT values to prevent double-free
+                const resolved_value = try self.resolveValue(literal);
+                return try resolved_value.clone(self.connection.allocator);
             },
             .FunctionCall => |function_call| {
                 // Convert storage function call to AST function call for evaluation
                 const ast_function_call = try self.convertStorageFunctionToAst(function_call);
-                defer ast_function_call.deinit(self.allocator);
-                
+                defer ast_function_call.deinit(self.connection.allocator);
+
                 return self.function_evaluator.evaluateFunction(ast_function_call);
             },
         };
@@ -231,13 +233,13 @@ pub const VirtualMachine = struct {
     
     /// Convert AST function call to storage function call
     fn convertAstFunctionToStorage(self: *Self, function_call: ast.FunctionCall) !storage.Column.FunctionCall {
-        var storage_args = try self.allocator.alloc(storage.Column.FunctionArgument, function_call.arguments.len);
+        var storage_args = try self.connection.allocator.alloc(storage.Column.FunctionArgument, function_call.arguments.len);
         for (function_call.arguments, 0..) |arg, i| {
             storage_args[i] = try self.convertAstFunctionArgToStorage(arg);
         }
 
         return storage.Column.FunctionCall{
-            .name = try self.allocator.dupe(u8, function_call.name),
+            .name = try self.connection.allocator.dupe(u8, function_call.name),
             .arguments = storage_args,
         };
     }
@@ -250,11 +252,11 @@ pub const VirtualMachine = struct {
                 return storage.Column.FunctionArgument{ .Literal = storage_value };
             },
             .String => |string| {
-                const text_value = storage.Value{ .Text = try self.allocator.dupe(u8, string) };
+                const text_value = storage.Value{ .Text = try self.connection.allocator.dupe(u8, string) };
                 return storage.Column.FunctionArgument{ .Literal = text_value };
             },
             .Column => |column| {
-                return storage.Column.FunctionArgument{ .Column = try self.allocator.dupe(u8, column) };
+                return storage.Column.FunctionArgument{ .Column = try self.connection.allocator.dupe(u8, column) };
             },
             .Parameter => |param_index| {
                 return storage.Column.FunctionArgument{ .Parameter = param_index };
@@ -264,13 +266,13 @@ pub const VirtualMachine = struct {
 
     /// Convert storage function call to AST function call
     fn convertStorageFunctionToAst(self: *Self, function_call: storage.Column.FunctionCall) anyerror!ast.FunctionCall {
-        var ast_args = try self.allocator.alloc(ast.FunctionArgument, function_call.arguments.len);
+        var ast_args = try self.connection.allocator.alloc(ast.FunctionArgument, function_call.arguments.len);
         for (function_call.arguments, 0..) |arg, i| {
             ast_args[i] = try self.convertStorageFunctionArgToAst(arg);
         }
         
         return ast.FunctionCall{
-            .name = try self.allocator.dupe(u8, function_call.name),
+            .name = try self.connection.allocator.dupe(u8, function_call.name),
             .arguments = ast_args,
         };
     }
@@ -283,7 +285,7 @@ pub const VirtualMachine = struct {
                 return ast.FunctionArgument{ .Literal = ast_value };
             },
             .Column => |column| {
-                return ast.FunctionArgument{ .Column = try self.allocator.dupe(u8, column) };
+                return ast.FunctionArgument{ .Column = try self.connection.allocator.dupe(u8, column) };
             },
             .Parameter => |param_index| {
                 return ast.FunctionArgument{ .Parameter = param_index };
@@ -295,9 +297,9 @@ pub const VirtualMachine = struct {
     fn convertStorageValueToAst(self: *Self, value: storage.Value) anyerror!ast.Value {
         return switch (value) {
             .Integer => |i| ast.Value{ .Integer = i },
-            .Text => |t| ast.Value{ .Text = try self.allocator.dupe(u8, t) },
+            .Text => |t| ast.Value{ .Text = try self.connection.allocator.dupe(u8, t) },
             .Real => |r| ast.Value{ .Real = r },
-            .Blob => |b| ast.Value{ .Blob = try self.allocator.dupe(u8, b) },
+            .Blob => |b| ast.Value{ .Blob = try self.connection.allocator.dupe(u8, b) },
             .Null => ast.Value.Null,
             .Parameter => |param_index| ast.Value{ .Parameter = param_index },
             .FunctionCall => |function_call| {
@@ -305,17 +307,17 @@ pub const VirtualMachine = struct {
                 return ast.Value{ .FunctionCall = ast_function_call };
             },
             // PostgreSQL compatibility values
-            .JSON => |j| ast.Value{ .Text = try self.allocator.dupe(u8, j) },
-            .JSONB => |jsonb| ast.Value{ .Text = try jsonb.toString(self.allocator) },
-            .UUID => |uuid| ast.Value{ .Text = try ast.UUIDUtils.toString(uuid, self.allocator) },
-            .Array => |array| ast.Value{ .Text = try array.toString(self.allocator) },
+            .JSON => |j| ast.Value{ .Text = try self.connection.allocator.dupe(u8, j) },
+            .JSONB => |jsonb| ast.Value{ .Text = try jsonb.toString(self.connection.allocator) },
+            .UUID => |uuid| ast.Value{ .Text = try ast.UUIDUtils.toString(uuid, self.connection.allocator) },
+            .Array => |array| ast.Value{ .Text = try array.toString(self.connection.allocator) },
             .Boolean => |b| ast.Value{ .Integer = if (b) 1 else 0 },
             .Timestamp => |ts| ast.Value{ .Integer = @intCast(ts) },
-            .TimestampTZ => |tstz| ast.Value{ .Text = try std.fmt.allocPrint(self.allocator, "{}", .{tstz.timestamp}) },
+            .TimestampTZ => |tstz| ast.Value{ .Text = try std.fmt.allocPrint(self.connection.allocator, "{}", .{tstz.timestamp}) },
             .Date => |d| ast.Value{ .Integer = d },
             .Time => |t| ast.Value{ .Integer = @intCast(t) },
             .Interval => |i| ast.Value{ .Integer = @intCast(i) },
-            .Numeric => |n| ast.Value{ .Text = try std.fmt.allocPrint(self.allocator, "NUMERIC({},{})", .{ n.precision, n.scale }) },
+            .Numeric => |n| ast.Value{ .Text = try std.fmt.allocPrint(self.connection.allocator, "NUMERIC({},{})", .{ n.precision, n.scale }) },
             .SmallInt => |si| ast.Value{ .Integer = si },
             .BigInt => |bi| ast.Value{ .Integer = @intCast(bi) },
         };
@@ -325,38 +327,60 @@ pub const VirtualMachine = struct {
     fn cloneStorageDefaultValue(self: *Self, default_value: storage.Column.DefaultValue) !storage.Column.DefaultValue {
         return switch (default_value) {
             .Literal => |literal| {
-                const cloned_literal = try self.cloneValue(literal);
+                // Create a deep clone to avoid double-free issues
+                const cloned_literal = try literal.clone(self.connection.allocator);
                 return storage.Column.DefaultValue{ .Literal = cloned_literal };
             },
             .FunctionCall => |function_call| {
-                const cloned_function_call = try self.cloneStorageFunctionCall(function_call);
+                // For function calls, create a proper deep clone
+                const cloned_function_call = try self.cloneStorageFunctionCallDeep(function_call);
                 return storage.Column.DefaultValue{ .FunctionCall = cloned_function_call };
             },
         };
     }
     
-    /// Clone a storage function call
+    /// Clone a storage function call (shallow - for compatibility)
     fn cloneStorageFunctionCall(self: *Self, function_call: storage.Column.FunctionCall) anyerror!storage.Column.FunctionCall {
-        var cloned_args = try self.allocator.alloc(storage.Column.FunctionArgument, function_call.arguments.len);
-        for (function_call.arguments, 0..) |arg, i| {
-            cloned_args[i] = try self.cloneStorageFunctionArgument(arg);
+        return self.cloneStorageFunctionCallDeep(function_call);
+    }
+
+    /// Clone a storage function call with deep cloning to prevent double-free
+    fn cloneStorageFunctionCallDeep(self: *Self, function_call: storage.Column.FunctionCall) anyerror!storage.Column.FunctionCall {
+        var cloned_args = try self.connection.allocator.alloc(storage.Column.FunctionArgument, function_call.arguments.len);
+        errdefer self.connection.allocator.free(cloned_args);
+
+        var args_cloned: usize = 0;
+        errdefer {
+            for (cloned_args[0..args_cloned]) |arg| {
+                self.deallocateStorageFunctionArgument(arg);
+            }
         }
-        
+
+        for (function_call.arguments, 0..) |arg, i| {
+            cloned_args[i] = try self.cloneStorageFunctionArgumentDeep(arg);
+            args_cloned = i + 1;
+        }
+
         return storage.Column.FunctionCall{
-            .name = try self.allocator.dupe(u8, function_call.name),
+            .name = try self.connection.allocator.dupe(u8, function_call.name),
             .arguments = cloned_args,
         };
     }
     
     /// Clone a storage function argument
     fn cloneStorageFunctionArgument(self: *Self, arg: storage.Column.FunctionArgument) anyerror!storage.Column.FunctionArgument {
+        return self.cloneStorageFunctionArgumentDeep(arg);
+    }
+
+    /// Clone a storage function argument with deep cloning
+    fn cloneStorageFunctionArgumentDeep(self: *Self, arg: storage.Column.FunctionArgument) anyerror!storage.Column.FunctionArgument {
         return switch (arg) {
             .Literal => |literal| {
-                const cloned_literal = try self.cloneValue(literal);
+                const cloned_literal = try literal.clone(self.connection.allocator);
                 return storage.Column.FunctionArgument{ .Literal = cloned_literal };
             },
             .Column => |column| {
-                return storage.Column.FunctionArgument{ .Column = try self.allocator.dupe(u8, column) };
+                return storage.Column.FunctionArgument{ .Column = try self.connection.allocator.dupe(u8, column) };
             },
             .Parameter => |param_index| {
                 return storage.Column.FunctionArgument{ .Parameter = param_index };
@@ -364,36 +388,30 @@ pub const VirtualMachine = struct {
         };
     }
 
+    /// Deallocate a storage function argument
+    fn deallocateStorageFunctionArgument(self: *Self, arg: storage.Column.FunctionArgument) void {
+        switch (arg) {
+            .Literal => |literal| literal.deinit(self.connection.allocator),
+            .Column => |column| self.connection.allocator.free(column),
+            .Parameter => {}, // No deallocation needed
+        }
+    }
+
     fn cloneValue(self: *Self, value: storage.Value) !storage.Value {
-        return switch (value) {
-            .Integer => |i| storage.Value{ .Integer = i },
-            .Real => |r| storage.Value{ .Real = r },
-            .Text => |t| storage.Value{ .Text = try self.allocator.dupe(u8, t) },
-            .Blob => |b| storage.Value{ .Blob = try self.allocator.dupe(u8, b) },
-            .Null => storage.Value.Null,
-            .Parameter => |_| return error.UnresolvedParameter, // Parameters should be resolved before cloning
-            .FunctionCall => |func| storage.Value{ .FunctionCall = try self.cloneStorageFunctionCall(func) },
-            // PostgreSQL compatibility values
-            .JSON => |json| storage.Value{ .JSON = try self.allocator.dupe(u8, json) },
-            .JSONB => |jsonb| storage.Value{ .JSONB = storage.JSONBValue.init(self.allocator, try jsonb.toString(self.allocator)) catch |err| blk: {
-                std.debug.print("JSONB clone error: {}\n", .{err});
-                break :blk storage.JSONBValue.init(self.allocator, "{}") catch unreachable;
-            } },
-            .UUID => |uuid| storage.Value{ .UUID = uuid },
-            .Array => |array| storage.Value{ .Array = storage.ArrayValue{
-                .element_type = array.element_type,
-                .elements = try self.allocator.dupe(storage.Value, array.elements),
-            } },
-            .Boolean => |b| storage.Value{ .Boolean = b },
-            .Timestamp => |ts| storage.Value{ .Timestamp = ts },
-            .TimestampTZ => |tstz| storage.Value{ .TimestampTZ = tstz },
-            .Date => |d| storage.Value{ .Date = d },
-            .Time => |t| storage.Value{ .Time = t },
-            .Interval => |i| storage.Value{ .Interval = i },
-            .Numeric => |n| storage.Value{ .Numeric = n },
-            .SmallInt => |si| storage.Value{ .SmallInt = si },
-            .BigInt => |bi| storage.Value{ .BigInt = bi },
-        };
+        // Note: cloneValue called from non-table-scan operation
+        const cloned = try value.clone(self.connection.allocator);
+        switch (value) {
+            .Text => {
+                switch (cloned) {
+                    .Text => {
+                        // Cloning text value in non-table-scan operation
+                    },
+                    else => unreachable,
+                }
+            },
+            else => {},
+        }
+        return cloned;
     }
 
     /// Execute limit
@@ -403,7 +421,7 @@ pub const VirtualMachine = struct {
 
         if (start > 0 or end < result.rows.items.len) {
             // Create new slice with limited rows
-            var limited_rows = std.array_list.Managed(storage.Row).init(self.allocator);
+            var limited_rows = std.array_list.Managed(storage.Row).init(self.connection.allocator);
             for (result.rows.items[start..end]) |row| {
                 try limited_rows.append(row);
             }
@@ -420,13 +438,13 @@ pub const VirtualMachine = struct {
 
         for (insert.values) |row_values| {
             // Build final values array for all table columns
-            var final_values = try self.allocator.alloc(storage.Value, table.schema.columns.len);
+            var final_values = try self.connection.allocator.alloc(storage.Value, table.schema.columns.len);
             var values_initialized: usize = 0;
             errdefer {
                 for (final_values[0..values_initialized]) |value| {
-                    value.deinit(self.allocator);
+                    value.deinit(self.connection.allocator);
                 }
-                self.allocator.free(final_values);
+                self.connection.allocator.free(final_values);
             }
 
             // Initialize all values to null first
@@ -502,22 +520,22 @@ pub const VirtualMachine = struct {
         }
 
         // Clone columns for the storage engine (they're owned by the planner otherwise)
-        var cloned_columns = try self.allocator.alloc(storage.Column, create.columns.len);
+        var cloned_columns = try self.connection.allocator.alloc(storage.Column, create.columns.len);
         var columns_cloned: usize = 0;
         errdefer {
             // Properly clean up cloned columns on error
             for (cloned_columns[0..columns_cloned]) |column| {
-                self.allocator.free(column.name);
+                self.connection.allocator.free(column.name);
                 if (column.default_value) |default_value| {
-                    default_value.deinit(self.allocator);
+                    default_value.deinit(self.connection.allocator);
                 }
             }
-            self.allocator.free(cloned_columns);
+            self.connection.allocator.free(cloned_columns);
         }
 
         for (create.columns, 0..) |column, i| {
             cloned_columns[i] = storage.Column{
-                .name = try self.allocator.dupe(u8, column.name),
+                .name = try self.connection.allocator.dupe(u8, column.name),
                 .data_type = column.data_type,
                 .is_primary_key = column.is_primary_key,
                 .is_nullable = column.is_nullable,
@@ -534,7 +552,7 @@ pub const VirtualMachine = struct {
         };
 
         self.connection.storage_engine.createTable(create.table_name, schema) catch |err| {
-            schema.deinit(self.allocator);
+            schema.deinit(self.connection.allocator);
             return err;
         };
         result.affected_rows = 1;
@@ -547,25 +565,25 @@ pub const VirtualMachine = struct {
         };
 
         // Get all current rows
-        const all_rows = try table.select(self.allocator);
+        const all_rows = try table.select(self.connection.allocator);
         defer {
             for (all_rows) |row| {
                 for (row.values) |value| {
-                    value.deinit(self.allocator);
+                    value.deinit(self.connection.allocator);
                 }
-                self.allocator.free(row.values);
+                self.connection.allocator.free(row.values);
             }
-            self.allocator.free(all_rows);
+            self.connection.allocator.free(all_rows);
         }
 
         var updated_count: u32 = 0;
-        var updated_rows = std.array_list.Managed(storage.Row).init(self.allocator);
+        var updated_rows = std.array_list.Managed(storage.Row).init(self.connection.allocator);
         defer {
             for (updated_rows.items) |row| {
                 for (row.values) |value| {
-                    value.deinit(self.allocator);
+                    value.deinit(self.connection.allocator);
                 }
-                self.allocator.free(row.values);
+                self.connection.allocator.free(row.values);
             }
             updated_rows.deinit();
         }
@@ -579,13 +597,13 @@ pub const VirtualMachine = struct {
 
             if (matches) {
                 // Create updated row by cloning the original and applying changes
-                var updated_values = try self.allocator.alloc(storage.Value, row.values.len);
+                var updated_values = try self.connection.allocator.alloc(storage.Value, row.values.len);
                 var values_cloned: usize = 0;
                 errdefer {
                     for (updated_values[0..values_cloned]) |value| {
-                        value.deinit(self.allocator);
+                        value.deinit(self.connection.allocator);
                     }
-                    self.allocator.free(updated_values);
+                    self.connection.allocator.free(updated_values);
                 }
 
                 for (row.values, 0..) |value, i| {
@@ -598,7 +616,7 @@ pub const VirtualMachine = struct {
                     // For simplicity, update the first column (in a real implementation,
                     // we'd need proper column name to index mapping from the table schema)
                     if (updated_values.len > 0) {
-                        updated_values[0].deinit(self.allocator);
+                        updated_values[0].deinit(self.connection.allocator);
                         updated_values[0] = try self.cloneValue(assignment.value);
                     }
                     _ = assignment.column; // Suppress unused warning for now
@@ -608,13 +626,13 @@ pub const VirtualMachine = struct {
                 updated_count += 1;
             } else {
                 // Keep the original row unchanged
-                var cloned_values = try self.allocator.alloc(storage.Value, row.values.len);
+                var cloned_values = try self.connection.allocator.alloc(storage.Value, row.values.len);
                 var values_cloned: usize = 0;
                 errdefer {
                     for (cloned_values[0..values_cloned]) |value| {
-                        value.deinit(self.allocator);
+                        value.deinit(self.connection.allocator);
                     }
-                    self.allocator.free(cloned_values);
+                    self.connection.allocator.free(cloned_values);
                 }
 
                 for (row.values, 0..) |value, i| {
@@ -627,27 +645,56 @@ pub const VirtualMachine = struct {
 
         // Replace the table data with updated rows
         // For now, we'll recreate the table (in a real implementation, we'd have proper update methods)
-        const table_name = try self.allocator.dupe(u8, update.table_name);
-        defer self.allocator.free(table_name);
+        const table_name = try self.connection.allocator.dupe(u8, update.table_name);
+        defer self.connection.allocator.free(table_name);
 
-        // Get table schema
-        const schema = table.schema;
+        // Clone table schema before dropping the table to avoid use-after-free
+        var cloned_columns = try self.connection.allocator.alloc(storage.Column, table.schema.columns.len);
+        var columns_cloned: usize = 0;
+        errdefer {
+            // Clean up cloned columns on error
+            for (cloned_columns[0..columns_cloned]) |column| {
+                self.connection.allocator.free(column.name);
+                if (column.default_value) |default_value| {
+                    default_value.deinit(self.connection.allocator);
+                }
+            }
+            self.connection.allocator.free(cloned_columns);
+        }
+
+        for (table.schema.columns, 0..) |column, i| {
+            cloned_columns[i] = storage.Column{
+                .name = try self.connection.allocator.dupe(u8, column.name),
+                .data_type = column.data_type,
+                .is_primary_key = column.is_primary_key,
+                .is_nullable = column.is_nullable,
+                .default_value = if (column.default_value) |default_value|
+                    try self.cloneStorageDefaultValue(default_value)
+                else
+                    null,
+            };
+            columns_cloned = i + 1;
+        }
+
+        const cloned_schema = storage.TableSchema{
+            .columns = cloned_columns,
+        };
 
         // Drop and recreate table with updated data
         try self.connection.storage_engine.dropTable(update.table_name);
-        try self.connection.storage_engine.createTable(table_name, schema);
+        try self.connection.storage_engine.createTable(table_name, cloned_schema);
 
         // Reinsert all rows
         const new_table = self.connection.storage_engine.getTable(update.table_name).?;
         for (updated_rows.items) |row| {
             // Clone the row for insertion
-            var insert_values = try self.allocator.alloc(storage.Value, row.values.len);
+            var insert_values = try self.connection.allocator.alloc(storage.Value, row.values.len);
             var values_cloned: usize = 0;
             errdefer {
                 for (insert_values[0..values_cloned]) |value| {
-                    value.deinit(self.allocator);
+                    value.deinit(self.connection.allocator);
                 }
-                self.allocator.free(insert_values);
+                self.connection.allocator.free(insert_values);
             }
 
             for (row.values, 0..) |value, i| {
@@ -667,25 +714,25 @@ pub const VirtualMachine = struct {
         };
 
         // Get all current rows
-        const all_rows = try table.select(self.allocator);
+        const all_rows = try table.select(self.connection.allocator);
         defer {
             for (all_rows) |row| {
                 for (row.values) |value| {
-                    value.deinit(self.allocator);
+                    value.deinit(self.connection.allocator);
                 }
-                self.allocator.free(row.values);
+                self.connection.allocator.free(row.values);
             }
-            self.allocator.free(all_rows);
+            self.connection.allocator.free(all_rows);
         }
 
         var deleted_count: u32 = 0;
-        var surviving_rows = std.array_list.Managed(storage.Row).init(self.allocator);
+        var surviving_rows = std.array_list.Managed(storage.Row).init(self.connection.allocator);
         defer {
             for (surviving_rows.items) |row| {
                 for (row.values) |value| {
-                    value.deinit(self.allocator);
+                    value.deinit(self.connection.allocator);
                 }
-                self.allocator.free(row.values);
+                self.connection.allocator.free(row.values);
             }
             surviving_rows.deinit();
         }
@@ -701,13 +748,13 @@ pub const VirtualMachine = struct {
                 deleted_count += 1;
             } else {
                 // Keep this row - clone it for the surviving rows
-                var cloned_values = try self.allocator.alloc(storage.Value, row.values.len);
+                var cloned_values = try self.connection.allocator.alloc(storage.Value, row.values.len);
                 var values_cloned: usize = 0;
                 errdefer {
                     for (cloned_values[0..values_cloned]) |value| {
-                        value.deinit(self.allocator);
+                        value.deinit(self.connection.allocator);
                     }
-                    self.allocator.free(cloned_values);
+                    self.connection.allocator.free(cloned_values);
                 }
 
                 for (row.values, 0..) |value, i| {
@@ -720,27 +767,56 @@ pub const VirtualMachine = struct {
 
         // Replace the table data with surviving rows
         if (deleted_count > 0) {
-            const table_name = try self.allocator.dupe(u8, delete.table_name);
-            defer self.allocator.free(table_name);
+            const table_name = try self.connection.allocator.dupe(u8, delete.table_name);
+            defer self.connection.allocator.free(table_name);
 
-            // Get table schema
-            const schema = table.schema;
+            // Clone table schema before dropping the table to avoid use-after-free
+            var cloned_columns = try self.connection.allocator.alloc(storage.Column, table.schema.columns.len);
+            var columns_cloned: usize = 0;
+            errdefer {
+                // Clean up cloned columns on error
+                for (cloned_columns[0..columns_cloned]) |column| {
+                    self.connection.allocator.free(column.name);
+                    if (column.default_value) |default_value| {
+                        default_value.deinit(self.connection.allocator);
+                    }
+                }
+                self.connection.allocator.free(cloned_columns);
+            }
+
+            for (table.schema.columns, 0..) |column, i| {
+                cloned_columns[i] = storage.Column{
+                    .name = try self.connection.allocator.dupe(u8, column.name),
+                    .data_type = column.data_type,
+                    .is_primary_key = column.is_primary_key,
+                    .is_nullable = column.is_nullable,
+                    .default_value = if (column.default_value) |default_value|
+                        try self.cloneStorageDefaultValue(default_value)
+                    else
+                        null,
+                };
+                columns_cloned = i + 1;
+            }
+
+            const cloned_schema = storage.TableSchema{
+                .columns = cloned_columns,
+            };
 
             // Drop and recreate table with remaining data
             try self.connection.storage_engine.dropTable(delete.table_name);
-            try self.connection.storage_engine.createTable(table_name, schema);
+            try self.connection.storage_engine.createTable(table_name, cloned_schema);
 
             // Reinsert surviving rows
             const new_table = self.connection.storage_engine.getTable(delete.table_name).?;
             for (surviving_rows.items) |row| {
                 // Clone the row for insertion
-                var insert_values = try self.allocator.alloc(storage.Value, row.values.len);
+                var insert_values = try self.connection.allocator.alloc(storage.Value, row.values.len);
                 var values_cloned: usize = 0;
                 errdefer {
                     for (insert_values[0..values_cloned]) |value| {
-                        value.deinit(self.allocator);
+                        value.deinit(self.connection.allocator);
                     }
-                    self.allocator.free(insert_values);
+                    self.connection.allocator.free(insert_values);
                 }
 
                 for (row.values, 0..) |value, i| {
@@ -773,9 +849,9 @@ pub const VirtualMachine = struct {
     /// Evaluate a comparison condition
     fn evaluateComparison(self: *Self, comp: *const ast.ComparisonCondition, row: *const storage.Row) !bool {
         const left_value = try self.evaluateExpression(&comp.left, row);
-        defer left_value.deinit(self.allocator);
+        defer left_value.deinit(self.connection.allocator);
         const right_value = try self.evaluateExpression(&comp.right, row);
-        defer right_value.deinit(self.allocator);
+        defer right_value.deinit(self.connection.allocator);
 
         return switch (comp.operator) {
             .Equal => self.compareValues(left_value, right_value) == .eq,
@@ -817,9 +893,9 @@ pub const VirtualMachine = struct {
             .Literal => |value| {
                 return switch (value) {
                     .Integer => |i| storage.Value{ .Integer = i },
-                    .Text => |t| storage.Value{ .Text = try self.allocator.dupe(u8, t) },
+                    .Text => |t| storage.Value{ .Text = try self.connection.allocator.dupe(u8, t) },
                     .Real => |r| storage.Value{ .Real = r },
-                    .Blob => |b| storage.Value{ .Blob = try self.allocator.dupe(u8, b) },
+                    .Blob => |b| storage.Value{ .Blob = try self.connection.allocator.dupe(u8, b) },
                     .Null => storage.Value.Null,
                     .Parameter => |param_index| {
                         if (self.parameters) |params| {
@@ -941,26 +1017,26 @@ pub const VirtualMachine = struct {
         };
 
         // Get all rows from both tables
-        const left_rows = try left_table.select(self.allocator);
+        const left_rows = try left_table.select(self.connection.allocator);
         defer {
             for (left_rows) |row| {
                 for (row.values) |value| {
-                    value.deinit(self.allocator);
+                    value.deinit(self.connection.allocator);
                 }
-                self.allocator.free(row.values);
+                self.connection.allocator.free(row.values);
             }
-            self.allocator.free(left_rows);
+            self.connection.allocator.free(left_rows);
         }
 
-        const right_rows = try right_table.select(self.allocator);
+        const right_rows = try right_table.select(self.connection.allocator);
         defer {
             for (right_rows) |row| {
                 for (row.values) |value| {
-                    value.deinit(self.allocator);
+                    value.deinit(self.connection.allocator);
                 }
-                self.allocator.free(row.values);
+                self.connection.allocator.free(row.values);
             }
-            self.allocator.free(right_rows);
+            self.connection.allocator.free(right_rows);
         }
 
         // Perform join logic based on join type
@@ -972,9 +1048,9 @@ pub const VirtualMachine = struct {
                 const combined_row = try self.combineRows(&left_row, &right_row);
                 defer {
                     for (combined_row.values) |value| {
-                        value.deinit(self.allocator);
+                        value.deinit(self.connection.allocator);
                     }
-                    self.allocator.free(combined_row.values);
+                    self.connection.allocator.free(combined_row.values);
                 }
 
                 // Check join condition
@@ -991,9 +1067,9 @@ pub const VirtualMachine = struct {
                 const null_right_row = try self.createNullRow(right_rows[0].values.len);
                 defer {
                     for (null_right_row.values) |value| {
-                        value.deinit(self.allocator);
+                        value.deinit(self.connection.allocator);
                     }
-                    self.allocator.free(null_right_row.values);
+                    self.connection.allocator.free(null_right_row.values);
                 }
                 
                 const final_row = try self.combineRows(&left_row, &null_right_row);
@@ -1010,9 +1086,9 @@ pub const VirtualMachine = struct {
                     const combined_row = try self.combineRows(&left_row, &right_row);
                     defer {
                         for (combined_row.values) |value| {
-                            value.deinit(self.allocator);
+                            value.deinit(self.connection.allocator);
                         }
-                        self.allocator.free(combined_row.values);
+                        self.connection.allocator.free(combined_row.values);
                     }
 
                     if (try self.evaluateCondition(&join.condition, &combined_row)) {
@@ -1026,9 +1102,9 @@ pub const VirtualMachine = struct {
                     const null_left_row = try self.createNullRow(left_rows[0].values.len);
                     defer {
                         for (null_left_row.values) |value| {
-                            value.deinit(self.allocator);
+                            value.deinit(self.connection.allocator);
                         }
-                        self.allocator.free(null_left_row.values);
+                        self.connection.allocator.free(null_left_row.values);
                     }
                     
                     const final_row = try self.combineRows(&null_left_row, &right_row);
@@ -1049,38 +1125,38 @@ pub const VirtualMachine = struct {
         };
 
         // Get all rows from both tables
-        const left_rows = try left_table.select(self.allocator);
+        const left_rows = try left_table.select(self.connection.allocator);
         defer {
             for (left_rows) |row| {
                 for (row.values) |value| {
-                    value.deinit(self.allocator);
+                    value.deinit(self.connection.allocator);
                 }
-                self.allocator.free(row.values);
+                self.connection.allocator.free(row.values);
             }
-            self.allocator.free(left_rows);
+            self.connection.allocator.free(left_rows);
         }
 
-        const right_rows = try right_table.select(self.allocator);
+        const right_rows = try right_table.select(self.connection.allocator);
         defer {
             for (right_rows) |row| {
                 for (row.values) |value| {
-                    value.deinit(self.allocator);
+                    value.deinit(self.connection.allocator);
                 }
-                self.allocator.free(row.values);
+                self.connection.allocator.free(row.values);
             }
-            self.allocator.free(right_rows);
+            self.connection.allocator.free(right_rows);
         }
 
         // Build hash table from smaller table (right table for now)
-        var hash_map = std.AutoHashMap(u64, std.array_list.Managed(storage.Row)).init(self.allocator);
+        var hash_map = std.AutoHashMap(u64, std.array_list.Managed(storage.Row)).init(self.connection.allocator);
         defer {
             var iterator = hash_map.iterator();
             while (iterator.next()) |entry| {
                 for (entry.value_ptr.items) |row| {
                     for (row.values) |value| {
-                        value.deinit(self.allocator);
+                        value.deinit(self.connection.allocator);
                     }
-                    self.allocator.free(row.values);
+                    self.connection.allocator.free(row.values);
                 }
                 entry.value_ptr.deinit();
             }
@@ -1102,13 +1178,13 @@ pub const VirtualMachine = struct {
     /// Combine two rows into a single row
     fn combineRows(self: *Self, left_row: *const storage.Row, right_row: *const storage.Row) !storage.Row {
         const total_columns = left_row.values.len + right_row.values.len;
-        var combined_values = try self.allocator.alloc(storage.Value, total_columns);
+        var combined_values = try self.connection.allocator.alloc(storage.Value, total_columns);
         var values_cloned: usize = 0;
         errdefer {
             for (combined_values[0..values_cloned]) |value| {
-                value.deinit(self.allocator);
+                value.deinit(self.connection.allocator);
             }
-            self.allocator.free(combined_values);
+            self.connection.allocator.free(combined_values);
         }
 
         // Copy left row values
@@ -1128,7 +1204,7 @@ pub const VirtualMachine = struct {
 
     /// Create a row with all NULL values
     fn createNullRow(self: *Self, column_count: usize) !storage.Row {
-        const null_values = try self.allocator.alloc(storage.Value, column_count);
+        const null_values = try self.connection.allocator.alloc(storage.Value, column_count);
         for (null_values) |*value| {
             value.* = storage.Value.Null;
         }
@@ -1194,7 +1270,7 @@ pub const VirtualMachine = struct {
                                 min_value = try self.cloneValue(current_value);
                             } else {
                                 if (self.compareValues(current_value, min_value.?) == .lt) {
-                                    min_value.?.deinit(self.allocator);
+                                    min_value.?.deinit(self.connection.allocator);
                                     min_value = try self.cloneValue(current_value);
                                 }
                             }
@@ -1213,7 +1289,7 @@ pub const VirtualMachine = struct {
                                 max_value = try self.cloneValue(current_value);
                             } else {
                                 if (self.compareValues(current_value, max_value.?) == .gt) {
-                                    max_value.?.deinit(self.allocator);
+                                    max_value.?.deinit(self.connection.allocator);
                                     max_value = try self.cloneValue(current_value);
                                 }
                             }
@@ -1235,14 +1311,14 @@ pub const VirtualMachine = struct {
         // Clear existing rows and add the aggregate result
         for (result.rows.items) |row| {
             for (row.values) |value| {
-                value.deinit(self.allocator);
+                value.deinit(self.connection.allocator);
             }
-            self.allocator.free(row.values);
+            self.connection.allocator.free(row.values);
         }
         result.rows.clearAndFree();
 
         // Create a single row with the aggregate result
-        var aggregate_row_values = try self.allocator.alloc(storage.Value, 1);
+        var aggregate_row_values = try self.connection.allocator.alloc(storage.Value, 1);
         aggregate_row_values[0] = aggregate_value;
 
         try result.rows.append(storage.Row{ .values = aggregate_row_values });
@@ -1322,15 +1398,32 @@ pub const VirtualMachine = struct {
 pub const ExecutionResult = struct {
     rows: std.array_list.Managed(storage.Row),
     affected_rows: u32,
+    connection: *db.Connection, // Store connection to access consistent allocator
 
-    pub fn deinit(self: *ExecutionResult, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *ExecutionResult) void {
+        const allocator = self.connection.allocator;
+        // Cleaning up execution result
         for (self.rows.items) |row| {
+            // Cleaning row values
             for (row.values) |value| {
+                switch (value) {
+                    .Text => {
+                        // Freeing text value
+                    },
+                    .Integer => {
+                        // Freeing integer value
+                    },
+                    else => {
+                        // Freeing other value
+                    },
+                }
                 value.deinit(allocator);
             }
+            // Freeing values array
             allocator.free(row.values);
         }
         self.rows.deinit();
+        // Cleanup completed
     }
 };
 
@@ -1357,7 +1450,7 @@ pub fn execute(connection: *db.Connection, parsed: *const ast.Statement) !void {
     defer plan.deinit();
 
     var result = try vm.execute(&plan);
-    defer result.deinit(connection.allocator);
+    defer result.deinit();
 
     // Print results based on statement type
     switch (parsed.*) {

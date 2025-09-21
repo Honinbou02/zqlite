@@ -3,6 +3,49 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+
+    // Build metadata options
+    const build_options = b.addOptions();
+
+    // Get Git commit hash
+    const git_commit_result = std.process.Child.run(.{
+        .allocator = b.allocator,
+        .argv = &[_][]const u8{ "git", "rev-parse", "--short", "HEAD" },
+    }) catch null;
+
+    const git_commit = if (git_commit_result) |result|
+        if (result.term == .Exited and result.term.Exited == 0)
+            std.mem.trim(u8, result.stdout, "\n\r ")
+        else
+            "unknown"
+    else
+        "unknown";
+
+    // Get build date (use date command for compatibility)
+    const date_result = std.process.Child.run(.{
+        .allocator = b.allocator,
+        .argv = &[_][]const u8{ "date", "+%Y-%m-%d %H:%M:%S" },
+    }) catch null;
+
+    const build_date = if (date_result) |result|
+        if (result.term == .Exited and result.term.Exited == 0)
+            std.mem.trim(u8, result.stdout, "\n\r ")
+        else
+            "unknown"
+    else
+        "unknown";
+
+    // Build mode string
+    const build_mode = switch (optimize) {
+        .Debug => "debug",
+        .ReleaseSafe => "release-safe",
+        .ReleaseFast => "release-fast",
+        .ReleaseSmall => "release-small",
+    };
+
+    build_options.addOption([]const u8, "git_commit", git_commit);
+    build_options.addOption([]const u8, "build_date", build_date);
+    build_options.addOption([]const u8, "build_mode", build_mode);
     
     // Add zsync dependency for async operations
     const zsync = b.dependency("zsync", .{
@@ -22,6 +65,7 @@ pub fn build(b: *std.Build) void {
 
     // Add zsync dependency to library
     lib.root_module.addImport("zsync", zsync.module("zsync"));
+    lib.root_module.addOptions("build_options", build_options);
 
     // Install the library
     b.installArtifact(lib);
@@ -66,6 +110,7 @@ pub fn build(b: *std.Build) void {
     // Link the library to the executable
     exe.root_module.addImport("zqlite", lib.root_module);
     exe.root_module.addImport("zsync", zsync.module("zsync"));
+    exe.root_module.addOptions("build_options", build_options);
 
     // Install the executable
     b.installArtifact(exe);
@@ -107,9 +152,85 @@ pub fn build(b: *std.Build) void {
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
+    // Add comprehensive test runner
+    const test_runner = b.addExecutable(.{
+        .name = "test_runner",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/test_runner.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    test_runner.root_module.addImport("zqlite", lib.root_module);
+    test_runner.root_module.addImport("zsync", zsync.module("zsync"));
+    test_runner.root_module.addOptions("build_options", build_options);
+
+    const run_test_runner = b.addRunArtifact(test_runner);
+
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_unit_tests.step);
     test_step.dependOn(&run_exe_unit_tests.step);
+
+    const comprehensive_test_step = b.step("test-comprehensive", "Run comprehensive test suite");
+    comprehensive_test_step.dependOn(&run_test_runner.step);
+
+    // Add quick validation test
+    const validation_test = b.addExecutable(.{
+        .name = "test_validation",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test_validation.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    validation_test.root_module.addImport("zqlite", lib.root_module);
+    validation_test.root_module.addImport("zsync", zsync.module("zsync"));
+    validation_test.root_module.addOptions("build_options", build_options);
+
+    const run_validation_test = b.addRunArtifact(validation_test);
+
+    const validation_step = b.step("test-quick", "Run quick validation test");
+    validation_step.dependOn(&run_validation_test.step);
+
+    // Add intensive memory test
+    const memory_test = b.addExecutable(.{
+        .name = "intensive_memory_test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/memory/intensive_memory_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    memory_test.root_module.addImport("zqlite", lib.root_module);
+    memory_test.root_module.addImport("zsync", zsync.module("zsync"));
+    memory_test.root_module.addOptions("build_options", build_options);
+
+    const run_memory_test = b.addRunArtifact(memory_test);
+
+    const memory_test_step = b.step("test-memory", "Run intensive memory leak detection tests");
+    memory_test_step.dependOn(&run_memory_test.step);
+
+    // Add simple memory test (avoiding btree bug)
+    const simple_memory_test = b.addExecutable(.{
+        .name = "simple_memory_test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/memory/simple_memory_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    simple_memory_test.root_module.addImport("zqlite", lib.root_module);
+    simple_memory_test.root_module.addImport("zsync", zsync.module("zsync"));
+    simple_memory_test.root_module.addOptions("build_options", build_options);
+
+    const run_simple_memory_test = b.addRunArtifact(simple_memory_test);
+
+    const simple_memory_test_step = b.step("test-memory-safe", "Run safe memory tests (avoiding btree bug)");
+    simple_memory_test_step.dependOn(&run_simple_memory_test.step);
 
     // Basic examples that work without external dependencies
     createBasicExample(b, "powerdns_example", lib, target, optimize, zsync);

@@ -18,9 +18,10 @@ pub const Shell = struct {
 
     /// Start the interactive shell
     pub fn run(self: *Self) !void {
-        // Basic shell functionality for v1.0.0 - stdin API issues in this Zig version
+        // Basic shell functionality - stdin API issues in this Zig version
         _ = self;
-        std.debug.print("🟦 ZQLite v1.0.0 - Interactive Shell\n", .{});
+        const version = @import("../version.zig");
+        std.debug.print("🟦 {s} - Interactive Shell\n", .{version.FULL_VERSION_WITH_BUILD});
         std.debug.print("Production SQLite alternative with ZCrypto integration\n", .{});
         std.debug.print("Use command line arguments for SQL execution\n", .{});
         std.debug.print("Type: zqlite --sql \"SELECT * FROM table;\"\n", .{});

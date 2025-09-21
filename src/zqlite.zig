@@ -165,9 +165,11 @@ pub fn advancedPrint() !void {
 
 // Tests
 test "zqlite version info" {
-    try std.testing.expect(std.mem.eql(u8, version, "1.3.0"));
+    const version_mod = @import("version.zig");
+    try std.testing.expect(std.mem.eql(u8, version_mod.VERSION_STRING, "1.3.3"));
 }
 
 test "build info contains version" {
-    try std.testing.expect(std.mem.indexOf(u8, build_info, version) != null);
+    const version_mod = @import("version.zig");
+    try std.testing.expect(std.mem.indexOf(u8, version_mod.FULL_VERSION_STRING, "ZQLite") != null);
 }

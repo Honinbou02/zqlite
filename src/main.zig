@@ -35,7 +35,11 @@ test "simple test" {
 
 test "database integration" {
     // Test in-memory database
-    const conn = try zqlite.openMemory();
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const conn = try zqlite.openMemory(allocator);
     defer conn.close();
 
     // Test basic functionality
@@ -58,7 +62,7 @@ test "end-to-end workflow" {
     const allocator = std.testing.allocator;
 
     // Create in-memory database
-    const conn = try zqlite.openMemory();
+    const conn = try zqlite.openMemory(allocator);
     defer conn.close();
 
     // Create table

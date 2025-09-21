@@ -161,7 +161,7 @@ pub const Connection = struct {
         // Execute and get results
         var virtual_machine = vm.VirtualMachine.init(self.allocator, self);
         var result = try virtual_machine.execute(&plan);
-        defer result.deinit(self.allocator);
+        defer result.deinit();
 
         // Convert to ResultSet (copy the rows so result can be cleaned up)
         var result_set = ResultSet{
@@ -202,7 +202,7 @@ pub const Connection = struct {
         // Execute and get results
         var virtual_machine = vm.VirtualMachine.init(self.allocator, self);
         var result = try virtual_machine.execute(&plan);
-        defer result.deinit(self.allocator);
+        defer result.deinit();
         
         return result.affected_rows;
     }

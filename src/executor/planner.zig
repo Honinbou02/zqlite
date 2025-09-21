@@ -505,13 +505,13 @@ pub const Planner = struct {
         };
     }
 
-    /// Clone a value
+    /// Clone a value from AST to storage
     fn cloneValue(self: *Self, value: ast.Value) !storage.Value {
-        return switch (value) {
+        const ast_storage_value = switch (value) {
             .Integer => |i| storage.Value{ .Integer = i },
-            .Text => |t| storage.Value{ .Text = try self.allocator.dupe(u8, t) },
+            .Text => |t| storage.Value{ .Text = t }, // Don't duplicate here, let clone handle it
             .Real => |r| storage.Value{ .Real = r },
-            .Blob => |b| storage.Value{ .Blob = try self.allocator.dupe(u8, b) },
+            .Blob => |b| storage.Value{ .Blob = b }, // Don't duplicate here, let clone handle it
             .Null => storage.Value.Null,
             .Parameter => |param_index| storage.Value{ .Parameter = param_index },
             .FunctionCall => |function_call| {
@@ -521,6 +521,7 @@ pub const Planner = struct {
                 return storage.Value{ .FunctionCall = storage_func };
             },
         };
+        return ast_storage_value.clone(self.allocator);
     }
     
     /// Clone a default value (preserving FunctionCall for VM evaluation)
@@ -589,9 +590,10 @@ pub const Planner = struct {
                 return storage.Column.FunctionArgument{ .Literal = storage_value };
             },
             .String => |string| {
-                // Convert string to Text literal
-                const text_value = storage.Value{ .Text = try self.allocator.dupe(u8, string) };
-                return storage.Column.FunctionArgument{ .Literal = text_value };
+                // Convert string to Text literal using proper clone
+                const text_value = storage.Value{ .Text = string };
+                const cloned_value = try text_value.clone(self.allocator);
+                return storage.Column.FunctionArgument{ .Literal = cloned_value };
             },
             .Column => |column| {
                 return storage.Column.FunctionArgument{ .Column = try self.allocator.dupe(u8, column) };
@@ -772,6 +774,9 @@ pub const CreateTableStep = struct {
         allocator.free(self.table_name);
         for (self.columns) |column| {
             allocator.free(column.name);
+            if (column.default_value) |default_value| {
+                default_value.deinit(allocator);
+            }
         }
         allocator.free(self.columns);
     }

@@ -5,7 +5,7 @@ const tokioz = @import("tokioz");
 pub const PQQuicTransport = @import("pq_quic.zig").PQQuicTransport;
 pub const PQDatabaseTransport = @import("pq_quic.zig").PQDatabaseTransport;
 
-/// 🌐 ZQLite v1.0.0 Transport Layer
+/// 🌐 ZQLite Transport Layer
 /// High-performance networking with optional post-quantum features
 pub const Transport = struct {
     allocator: std.mem.Allocator,

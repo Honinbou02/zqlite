@@ -41,7 +41,7 @@ pub fn main() !void {
         try stmt.bindParameter(3, zqlite.storage.Value{ .Integer = emp.salary });
         
         var result = try stmt.execute(conn);
-        defer result.deinit(allocator);
+        defer result.deinit();
     }
     
     std.debug.print("✅ Inserted {} employee records\n\n", .{employee_data.len});
