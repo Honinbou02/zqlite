@@ -27,11 +27,11 @@ pub fn main() !void {
     };
 
     for (test_categories) |category| {
-        std.debug.print("\n📋 Running {} Tests...\n", .{category.name});
+        std.debug.print("\n📋 Running {s} Tests...\n", .{category.name});
         std.debug.print("-" ** 40 ++ "\n", .{});
 
         const result = category.test_fn(allocator) catch |err| {
-            std.debug.print("❌ Category {} failed with error: {}\n", .{ category.name, err });
+            std.debug.print("❌ Category {s} failed with error: {}\n", .{ category.name, err });
             failed_tests += 1;
             continue;
         };
@@ -41,9 +41,9 @@ pub fn main() !void {
         failed_tests += result.failed;
 
         if (result.failed == 0) {
-            std.debug.print("✅ All {} tests in {} passed!\n", .{ result.passed, category.name });
+            std.debug.print("✅ All {} tests in {s} passed!\n", .{ result.passed, category.name });
         } else {
-            std.debug.print("⚠️  {} tests passed, {} failed in {}\n", .{ result.passed, result.failed, category.name });
+            std.debug.print("⚠️  {} tests passed, {} failed in {s}\n", .{ result.passed, result.failed, category.name });
         }
     }
 
@@ -70,7 +70,7 @@ const TestResult = struct {
 
 const TestCategory = struct {
     name: []const u8,
-    test_fn: fn (allocator: std.mem.Allocator) anyerror!TestResult,
+    test_fn: *const fn (allocator: std.mem.Allocator) anyerror!TestResult,
 };
 
 fn runSQLiteFunctionalityTests(allocator: std.mem.Allocator) !TestResult {
@@ -167,13 +167,13 @@ fn runQueryValidationTests(allocator: std.mem.Allocator) !TestResult {
 
 const TestFn = struct {
     name: []const u8,
-    test_fn: fn () anyerror!void,
+    test_fn: *const fn () anyerror!void,
 };
 
 // Wrapper functions that call the actual tests
 fn runBasicCRUDTest() !void {
     const T = @import("unit/sqlite_functionality_test.zig");
-    try std.testing.refAllDecls(T);
+    std.testing.refAllDecls(T);
 }
 
 fn runDataTypesTest() !void {
