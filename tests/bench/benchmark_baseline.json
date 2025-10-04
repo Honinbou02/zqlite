@@ -1,0 +1,23 @@
+{
+  "version": "1.3.3",
+  "date": "2025-10-03",
+  "benchmarks": {
+    "simple_insert": {
+      "min_ops_per_sec": 3000,
+      "description": "Simple INSERT operations (10 ops)"
+    },
+    "bulk_insert": {
+      "min_ops_per_sec": 2000,
+      "description": "Bulk INSERT in transaction (10 ops)"
+    },
+    "select_query": {
+      "min_ops_per_sec": 2000,
+      "description": "SELECT queries (50 ops)"
+    },
+    "update": {
+      "min_ops_per_sec": 150,
+      "description": "UPDATE operations (50 ops)"
+    }
+  },
+  "notes": "Baseline performance thresholds for CI regression detection. Operation counts limited due to known B-tree memory issues."
+}

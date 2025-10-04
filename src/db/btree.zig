@@ -87,10 +87,18 @@ pub const BTree = struct {
                 try self.splitChild(&node, child_index);
                 // After split, check if we need to adjust child index
                 const new_search = node.binarySearchKey(key);
-                child_index = if (new_search.found or key > node.keys[new_search.index]) 
-                    new_search.index + 1 
-                else 
+                // BOUNDS CHECK: new_search.index can equal key_count (insertion at end)
+                // so we must check before accessing node.keys
+                child_index = if (new_search.found or (new_search.index < node.key_count and key > node.keys[new_search.index]))
+                    new_search.index + 1
+                else
                     new_search.index;
+
+                // CRITICAL FIX: Write the modified parent node back to disk
+                // splitChild modifies the parent node (adds key, updates child pointers)
+                // but doesn't write it back. We must persist these changes before
+                // recursing, otherwise child pointers will be invalid.
+                try self.writeNode(page_id, &node);
             }
 
             try self.insertNonFull(node.children[child_index], key, value);

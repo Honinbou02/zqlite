@@ -232,6 +232,135 @@ pub fn build(b: *std.Build) void {
     const simple_memory_test_step = b.step("test-memory-safe", "Run safe memory tests (avoiding btree bug)");
     simple_memory_test_step.dependOn(&run_simple_memory_test.step);
 
+    // Add comprehensive leak detection test
+    const leak_detection_test = b.addExecutable(.{
+        .name = "leak_detection_test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/memory/leak_detection_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    leak_detection_test.root_module.addImport("zqlite", lib.root_module);
+    leak_detection_test.root_module.addImport("zsync", zsync.module("zsync"));
+    leak_detection_test.root_module.addOptions("build_options", build_options);
+
+    const run_leak_detection_test = b.addRunArtifact(leak_detection_test);
+
+    const leak_detection_step = b.step("test-leak-detection", "Run comprehensive memory leak detection");
+    leak_detection_step.dependOn(&run_leak_detection_test.step);
+
+    // Add CREATE TABLE specific leak test (validates DEFAULT constraint fixes)
+    const create_table_leak_test = b.addExecutable(.{
+        .name = "create_table_leak_test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/memory/create_table_leak_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    create_table_leak_test.root_module.addImport("zqlite", lib.root_module);
+    create_table_leak_test.root_module.addImport("zsync", zsync.module("zsync"));
+    create_table_leak_test.root_module.addOptions("build_options", build_options);
+
+    const run_create_table_leak_test = b.addRunArtifact(create_table_leak_test);
+
+    const create_table_leak_step = b.step("test-create-table-leaks", "Test CREATE TABLE DEFAULT constraint memory fixes");
+    create_table_leak_step.dependOn(&run_create_table_leak_test.step);
+
+    // Add SQL parser fuzzer
+    const sql_parser_fuzzer = b.addExecutable(.{
+        .name = "sql_parser_fuzzer",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/fuzz/sql_parser_fuzzer.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    sql_parser_fuzzer.root_module.addImport("zqlite", lib.root_module);
+    sql_parser_fuzzer.root_module.addImport("zsync", zsync.module("zsync"));
+    sql_parser_fuzzer.root_module.addOptions("build_options", build_options);
+
+    const run_sql_parser_fuzzer = b.addRunArtifact(sql_parser_fuzzer);
+
+    const fuzz_parser_step = b.step("fuzz-parser", "Run SQL parser fuzzer");
+    fuzz_parser_step.dependOn(&run_sql_parser_fuzzer.step);
+
+    // Add logging test
+    const logger_test = b.addExecutable(.{
+        .name = "logger_test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/logging/logger_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    logger_test.root_module.addImport("zqlite", lib.root_module);
+    logger_test.root_module.addImport("zsync", zsync.module("zsync"));
+
+    const run_logger_test = b.addRunArtifact(logger_test);
+
+    const logger_test_step = b.step("test-logging", "Test structured logging system");
+    logger_test_step.dependOn(&run_logger_test.step);
+
+    // Add simple benchmark suite (avoids B-tree OrderMismatch bug)
+    const benchmark_suite = b.addExecutable(.{
+        .name = "benchmark_suite",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/bench/simple_benchmark.zig"),
+            .target = target,
+            .optimize = .ReleaseFast, // Benchmarks need optimizations
+        }),
+    });
+
+    benchmark_suite.root_module.addImport("zqlite", lib.root_module);
+    benchmark_suite.root_module.addImport("zsync", zsync.module("zsync"));
+
+    const run_benchmark_suite = b.addRunArtifact(benchmark_suite);
+
+    const benchmark_step = b.step("bench", "Run simple performance benchmark");
+    benchmark_step.dependOn(&run_benchmark_suite.step);
+
+    // Add benchmark validator for CI regression detection
+    const benchmark_validator = b.addExecutable(.{
+        .name = "benchmark_validator",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/bench/benchmark_validator.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+        }),
+    });
+
+    benchmark_validator.root_module.addImport("zqlite", lib.root_module);
+    benchmark_validator.root_module.addImport("zsync", zsync.module("zsync"));
+
+    const run_benchmark_validator = b.addRunArtifact(benchmark_validator);
+
+    const validate_bench_step = b.step("bench-validate", "Validate benchmarks against baseline (CI)");
+    validate_bench_step.dependOn(&run_benchmark_validator.step);
+
+    // Add minimal benchmark for debugging
+    const minimal_bench = b.addExecutable(.{
+        .name = "minimal_bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/bench/minimal_bench.zig"),
+            .target = target,
+            .optimize = .Debug,
+        }),
+    });
+
+    minimal_bench.root_module.addImport("zqlite", lib.root_module);
+    minimal_bench.root_module.addImport("zsync", zsync.module("zsync"));
+
+    const run_minimal_bench = b.addRunArtifact(minimal_bench);
+
+    const minimal_bench_step = b.step("bench-minimal", "Run minimal benchmark (debug)");
+    minimal_bench_step.dependOn(&run_minimal_bench.step);
+
     // Basic examples that work without external dependencies
     createBasicExample(b, "powerdns_example", lib, target, optimize, zsync);
     createBasicExample(b, "cipher_dns", lib, target, optimize, zsync);

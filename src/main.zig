@@ -86,7 +86,7 @@ test "end-to-end workflow" {
     try stmt.bindParameter(2, zqlite.storage.Value{ .Real = 79.99 });
 
     var result = try stmt.execute(conn);
-    defer result.deinit(allocator);
+    defer result.deinit();
 
     try std.testing.expectEqual(@as(u32, 1), result.affected_rows);
 

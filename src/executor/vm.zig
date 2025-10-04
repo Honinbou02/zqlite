@@ -555,6 +555,9 @@ pub const VirtualMachine = struct {
             schema.deinit(self.connection.allocator);
             return err;
         };
+
+        // Clean up temporary schema (storage engine has its own clone now)
+        schema.deinit(self.connection.allocator);
         result.affected_rows = 1;
     }
 
@@ -676,13 +679,16 @@ pub const VirtualMachine = struct {
             columns_cloned = i + 1;
         }
 
-        const cloned_schema = storage.TableSchema{
+        var cloned_schema = storage.TableSchema{
             .columns = cloned_columns,
         };
 
         // Drop and recreate table with updated data
         try self.connection.storage_engine.dropTable(update.table_name);
         try self.connection.storage_engine.createTable(table_name, cloned_schema);
+
+        // Clean up temporary schema (storage engine has its own clone now)
+        cloned_schema.deinit(self.connection.allocator);
 
         // Reinsert all rows
         const new_table = self.connection.storage_engine.getTable(update.table_name).?;
@@ -798,13 +804,16 @@ pub const VirtualMachine = struct {
                 columns_cloned = i + 1;
             }
 
-            const cloned_schema = storage.TableSchema{
+            var cloned_schema = storage.TableSchema{
                 .columns = cloned_columns,
             };
 
             // Drop and recreate table with remaining data
             try self.connection.storage_engine.dropTable(delete.table_name);
             try self.connection.storage_engine.createTable(table_name, cloned_schema);
+
+            // Clean up temporary schema (storage engine has its own clone now)
+            cloned_schema.deinit(self.connection.allocator);
 
             // Reinsert surviving rows
             const new_table = self.connection.storage_engine.getTable(delete.table_name).?;
@@ -1452,49 +1461,50 @@ pub fn execute(connection: *db.Connection, parsed: *const ast.Statement) !void {
     var result = try vm.execute(&plan);
     defer result.deinit();
 
-    // Print results based on statement type
-    switch (parsed.*) {
-        .Select => {
-            std.debug.print("┌─ Query Results ─┐\n", .{});
-            if (result.rows.items.len == 0) {
-                std.debug.print("│ No rows found   │\n", .{});
-            } else {
-                for (result.rows.items, 0..) |row, i| {
-                    std.debug.print("│ Row {d}: ", .{i + 1});
-                    for (row.values, 0..) |value, j| {
-                        if (j > 0) std.debug.print(", ", .{});
-                        switch (value) {
-                            .Integer => |int| std.debug.print("{d}", .{int}),
-                            .Text => |text| std.debug.print("'{s}'", .{text}),
-                            .Real => |real| std.debug.print("{d:.2}", .{real}),
-                            .Null => std.debug.print("NULL", .{}),
-                            .Blob => std.debug.print("<blob>", .{}),
-                            .Parameter => |param_index| std.debug.print("?{d}", .{param_index}),
-                            .FunctionCall => std.debug.print("<function>", .{}),
-                            .JSON => |json| std.debug.print("JSON:'{s}'", .{json}),
-                            .JSONB => |jsonb| std.debug.print("JSONB:'{s}'", .{jsonb.toString(connection.allocator) catch "invalid"}),
-                            .UUID => |uuid| std.debug.print("UUID:{any}", .{uuid}),
-                            .Array => |array| std.debug.print("ARRAY:{s}", .{array.toString(connection.allocator) catch "invalid"}),
-                            .Boolean => |b| std.debug.print("{}", .{b}),
-                            .Timestamp => |ts| std.debug.print("TS:{d}", .{ts}),
-                            .TimestampTZ => |tstz| std.debug.print("TSTZ:{d}({s})", .{ tstz.timestamp, tstz.timezone }),
-                            .Date => |d| std.debug.print("DATE:{d}", .{d}),
-                            .Time => |t| std.debug.print("TIME:{d}", .{t}),
-                            .Interval => |interval| std.debug.print("INTERVAL:{d}", .{interval}),
-                            .Numeric => |n| std.debug.print("NUMERIC:{s}", .{n.digits}),
-                            .SmallInt => |si| std.debug.print("{d}", .{si}),
-                            .BigInt => |bi| std.debug.print("{d}", .{bi}),
-                        }
-                    }
-                    std.debug.print(" │\n", .{});
-                }
-            }
-            std.debug.print("└─ {d} row(s) ─────┘\n", .{result.rows.items.len});
-        },
-        else => {
-            std.debug.print("✅ Statement executed successfully. Affected rows: {d}\n", .{result.affected_rows});
-        },
-    }
+    // Print results based on statement type (disabled for benchmarks - verbose output)
+    // Uncomment these lines for interactive/debugging use
+    // switch (parsed.*) {
+    //     .Select => {
+    //         std.debug.print("┌─ Query Results ─┐\n", .{});
+    //         if (result.rows.items.len == 0) {
+    //             std.debug.print("│ No rows found   │\n", .{});
+    //         } else {
+    //             for (result.rows.items, 0..) |row, i| {
+    //                 std.debug.print("│ Row {d}: ", .{i + 1});
+    //                 for (row.values, 0..) |value, j| {
+    //                     if (j > 0) std.debug.print(", ", .{});
+    //                     switch (value) {
+    //                         .Integer => |int| std.debug.print("{d}", .{int}),
+    //                         .Text => |text| std.debug.print("'{s}'", .{text}),
+    //                         .Real => |real| std.debug.print("{d:.2}", .{real}),
+    //                         .Null => std.debug.print("NULL", .{}),
+    //                         .Blob => std.debug.print("<blob>", .{}),
+    //                         .Parameter => |param_index| std.debug.print("?{d}", .{param_index}),
+    //                         .FunctionCall => std.debug.print("<function>", .{}),
+    //                         .JSON => |json| std.debug.print("JSON:'{s}'", .{json}),
+    //                         .JSONB => |jsonb| std.debug.print("JSONB:'{s}'", .{jsonb.toString(connection.allocator) catch "invalid"}),
+    //                         .UUID => |uuid| std.debug.print("UUID:{any}", .{uuid}),
+    //                         .Array => |array| std.debug.print("ARRAY:{s}", .{array.toString(connection.allocator) catch "invalid"}),
+    //                         .Boolean => |b| std.debug.print("{}", .{b}),
+    //                         .Timestamp => |ts| std.debug.print("TS:{d}", .{ts}),
+    //                         .TimestampTZ => |tstz| std.debug.print("TSTZ:{d}({s})", .{ tstz.timestamp, tstz.timezone }),
+    //                         .Date => |d| std.debug.print("DATE:{d}", .{d}),
+    //                         .Time => |t| std.debug.print("TIME:{d}", .{t}),
+    //                         .Interval => |interval| std.debug.print("INTERVAL:{d}", .{interval}),
+    //                         .Numeric => |n| std.debug.print("NUMERIC:{s}", .{n.digits}),
+    //                         .SmallInt => |si| std.debug.print("{d}", .{si}),
+    //                         .BigInt => |bi| std.debug.print("{d}", .{bi}),
+    //                     }
+    //                 }
+    //                 std.debug.print(" │\n", .{});
+    //             }
+    //         }
+    //         std.debug.print("└─ {d} row(s) ─────┘\n", .{result.rows.items.len});
+    //     },
+    //     else => {
+    //         std.debug.print("✅ Statement executed successfully. Affected rows: {d}\n", .{result.affected_rows});
+    //     },
+    // }
 }
 
 test "vm creation" {

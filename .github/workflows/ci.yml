@@ -30,3 +30,12 @@ jobs:
 
       - name: Run Zig tests
         run: zig build test
+
+      - name: Run CREATE TABLE memory leak detection
+        run: zig build test-create-table-leaks
+
+      - name: Run comprehensive tests
+        run: zig build test-comprehensive
+
+      - name: Validate benchmark performance
+        run: zig build bench-validate

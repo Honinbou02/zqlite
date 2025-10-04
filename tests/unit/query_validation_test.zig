@@ -1,6 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
-const zqlite = @import("../../src/zqlite.zig");
+const zqlite = @import("zqlite");
 
 test "Query Validation - Complex SELECT Statements" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

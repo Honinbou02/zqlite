@@ -36,9 +36,15 @@ pub const planner = @import("executor/planner.zig");
 pub const vm = @import("executor/vm.zig");
 pub const prepared_statements = @import("executor/prepared_statements.zig");
 pub const window_functions = @import("executor/window_functions.zig");
+pub const executor = struct {
+    pub const PreparedStatement = prepared_statements.PreparedStatement;
+};
 
 // CLI shell
 pub const cli = @import("shell/cli.zig");
+
+// Structured logging
+pub const logging = @import("logging/logger.zig");
 
 // Advanced cryptographic features (optional - v1.2.2)
 pub const crypto = if (@import("builtin").is_test or @hasDecl(@import("root"), "zqlite_enable_crypto"))

@@ -185,7 +185,8 @@ pub const Table = struct {
         var table = try allocator.create(Self);
         table.allocator = allocator;
         table.name = try allocator.dupe(u8, name);
-        table.schema = schema;
+        // Deep clone schema to ensure ownership with storage engine's allocator
+        table.schema = try schema.clone(allocator);
         table.btree = try btree.BTree.init(allocator, page_manager);
         table.row_count = 0;
 
@@ -226,6 +227,28 @@ pub const TableSchema = struct {
         }
         allocator.free(self.columns);
     }
+
+    /// Deep clone schema with a new allocator (for ownership transfer)
+    pub fn clone(self: TableSchema, allocator: std.mem.Allocator) CloneValueError!TableSchema {
+        var cloned_columns = try allocator.alloc(Column, self.columns.len);
+
+        for (self.columns, 0..) |column, i| {
+            cloned_columns[i] = Column{
+                .name = try allocator.dupe(u8, column.name),
+                .data_type = column.data_type,
+                .is_primary_key = column.is_primary_key,
+                .is_nullable = column.is_nullable,
+                .default_value = if (column.default_value) |default_val|
+                    try default_val.clone(allocator)
+                else
+                    null,
+            };
+        }
+
+        return TableSchema{
+            .columns = cloned_columns,
+        };
+    }
 };
 
 /// Column definition
@@ -239,12 +262,19 @@ pub const Column = struct {
     pub const DefaultValue = union(enum) {
         Literal: Value,
         FunctionCall: FunctionCall,
-        
+
         pub fn deinit(self: DefaultValue, allocator: std.mem.Allocator) void {
             switch (self) {
                 .Literal => |value| value.deinit(allocator),
                 .FunctionCall => |func| func.deinit(allocator),
             }
+        }
+
+        pub fn clone(self: DefaultValue, allocator: std.mem.Allocator) CloneValueError!DefaultValue {
+            return switch (self) {
+                .Literal => |value| DefaultValue{ .Literal = try value.clone(allocator) },
+                .FunctionCall => |func| DefaultValue{ .FunctionCall = try func.clone(allocator) },
+            };
         }
     };
     

@@ -1,12 +1,14 @@
 const std = @import("std");
 const testing = std.testing;
-const zqlite = @import("../../src/zqlite.zig");
+const zqlite = @import("zqlite");
 
 test "Memory Management - No Leaks with DEFAULT CURRENT_TIMESTAMP" {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .track_allocations = true }){};
     defer {
         const leaked = gpa.deinit();
-        try testing.expect(leaked == .ok);
+        if (leaked != .ok) {
+            @panic("Memory leak detected!");
+        }
     }
     const allocator = gpa.allocator();
 
@@ -36,7 +38,9 @@ test "Memory Management - Complex INSERT/UPDATE/DELETE Cycle" {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .track_allocations = true }){};
     defer {
         const leaked = gpa.deinit();
-        try testing.expect(leaked == .ok);
+        if (leaked != .ok) {
+            @panic("Memory leak detected!");
+        }
     }
     const allocator = gpa.allocator();
 
@@ -81,7 +85,9 @@ test "Memory Management - Function Call DEFAULT Values" {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .track_allocations = true }){};
     defer {
         const leaked = gpa.deinit();
-        try testing.expect(leaked == .ok);
+        if (leaked != .ok) {
+            @panic("Memory leak detected!");
+        }
     }
     const allocator = gpa.allocator();
 
@@ -121,7 +127,9 @@ test "Memory Management - Large Text Fields" {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .track_allocations = true }){};
     defer {
         const leaked = gpa.deinit();
-        try testing.expect(leaked == .ok);
+        if (leaked != .ok) {
+            @panic("Memory leak detected!");
+        }
     }
     const allocator = gpa.allocator();
 
@@ -131,7 +139,7 @@ test "Memory Management - Large Text Fields" {
     try conn.execute("CREATE TABLE large_text (id INTEGER PRIMARY KEY, content TEXT)");
 
     // Create large text content
-    var large_content = try allocator.alloc(u8, 10000);
+    const large_content = try allocator.alloc(u8, 10000);
     defer allocator.free(large_content);
     @memset(large_content, 'A');
 
@@ -162,7 +170,9 @@ test "Memory Management - Connection Lifecycle" {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .track_allocations = true }){};
     defer {
         const leaked = gpa.deinit();
-        try testing.expect(leaked == .ok);
+        if (leaked != .ok) {
+            @panic("Memory leak detected!");
+        }
     }
     const allocator = gpa.allocator();
 
@@ -189,7 +199,9 @@ test "Memory Management - Prepared Statement Reuse" {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .track_allocations = true }){};
     defer {
         const leaked = gpa.deinit();
-        try testing.expect(leaked == .ok);
+        if (leaked != .ok) {
+            @panic("Memory leak detected!");
+        }
     }
     const allocator = gpa.allocator();
 

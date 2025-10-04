@@ -1,5 +1,6 @@
 const std = @import("std");
-const version = @import("../src/version.zig");
+const zqlite = @import("zqlite");
+const version = zqlite.version;
 
 // Import all test modules
 const sqlite_functionality_test = @import("unit/sqlite_functionality_test.zig");
